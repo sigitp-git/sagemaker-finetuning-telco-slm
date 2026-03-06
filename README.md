@@ -139,6 +139,7 @@ Steps:
 1. Install dependencies:
 
 ```bash
+pip install sagemaker
 pip install transformers peft trl datasets accelerate bitsandbytes
 ```
 
