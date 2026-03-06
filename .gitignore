@@ -1,4 +1,3 @@
-data/
 adapters/
 results/
 reports/
@@ -8,4 +7,3 @@ __pycache__/
 *.pth
 *.bin
 node_modules/
-generation.log

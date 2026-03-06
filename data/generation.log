@@ -1,0 +1,62 @@
+Generating 1300 training examples...
+  Progress: 50/1300 | written=50 skipped=0
+  Progress: 100/1300 | written=100 skipped=0
+  Progress: 150/1300 | written=150 skipped=0
+  Progress: 200/1300 | written=200 skipped=0
+  Progress: 250/1300 | written=250 skipped=0
+  Progress: 300/1300 | written=300 skipped=0
+  Progress: 350/1300 | written=350 skipped=0
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 400/1300 | written=399 skipped=1
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 450/1300 | written=448 skipped=2
+  Progress: 500/1300 | written=498 skipped=2
+  Progress: 550/1300 | written=548 skipped=2
+  Progress: 600/1300 | written=598 skipped=2
+  Progress: 650/1300 | written=648 skipped=2
+  Progress: 700/1300 | written=698 skipped=2
+  Progress: 750/1300 | written=748 skipped=2
+  Progress: 800/1300 | written=798 skipped=2
+  Progress: 850/1300 | written=848 skipped=2
+  Progress: 900/1300 | written=898 skipped=2
+  Progress: 950/1300 | written=948 skipped=2
+  Progress: 1000/1300 | written=998 skipped=2
+  Progress: 1050/1300 | written=1048 skipped=2
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  [WARN] Failed after 3 attempts for authentication_failure: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 1100/1300 | written=1096 skipped=4
+  Progress: 1150/1300 | written=1146 skipped=4
+  Progress: 1200/1300 | written=1196 skipped=4
+  Progress: 1250/1300 | written=1246 skipped=4
+  Progress: 1300/1300 | written=1296 skipped=4
+Done: 1296 examples written to data/train.jsonl (4 skipped)
+Generating 1000 test examples...
+  Progress: 50/1000 | written=50 skipped=0
+  Progress: 100/1000 | written=100 skipped=0
+  Progress: 150/1000 | written=150 skipped=0
+  Progress: 200/1000 | written=200 skipped=0
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 250/1000 | written=249 skipped=1
+  Progress: 300/1000 | written=299 skipped=1
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 350/1000 | written=348 skipped=2
+  Progress: 400/1000 | written=398 skipped=2
+  Progress: 450/1000 | written=448 skipped=2
+  Progress: 500/1000 | written=498 skipped=2
+  Progress: 550/1000 | written=548 skipped=2
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 600/1000 | written=597 skipped=3
+  Progress: 650/1000 | written=647 skipped=3
+  Progress: 700/1000 | written=697 skipped=3
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 750/1000 | written=746 skipped=4
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 800/1000 | written=795 skipped=5
+  [WARN] Failed after 3 attempts for authentication_failure: Unterminated string starting at: line 1 column 2008 (char 2007)
+  Progress: 850/1000 | written=844 skipped=6
+  Progress: 900/1000 | written=894 skipped=6
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 950/1000 | written=943 skipped=7
+  [WARN] Failed after 3 attempts for normal: Unterminated string starting at: line 1 column 9 (char 8)
+  Progress: 1000/1000 | written=992 skipped=8
+Done: 992 examples written to data/test.jsonl (8 skipped)
