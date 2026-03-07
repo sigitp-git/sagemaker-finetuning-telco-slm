@@ -167,10 +167,33 @@ huggingface_hub: 1.6.0
 scikit-learn: 1.8.0
 ```
 
+Install the Hugging Face CLI (`hf`) using the standalone installer:
+
+```bash
+# Install (requires python3-venv; install it first if missing)
+sudo apt install -y python3.11-venv
+curl -LsSf https://hf.co/cli/install.sh | bash
+
+# Make the CLI available in the current shell session
+export PATH="/home/ubuntu/.local/bin:$PATH"
+
+# Persist PATH across sessions
+echo 'export PATH="/home/ubuntu/.local/bin:$PATH"' >> ~/.bashrc
+```
+
+Validate the CLI is working:
+
+```bash
+hf --version
+# Expected: 1.6.0
+```
+
+> Note: The installer uses `hf` as the command name (not `huggingface-cli`). It installs into a dedicated venv at `~/.hf-cli` and symlinks the binary to `~/.local/bin/hf`.
+
 2. Download the base model from Hugging Face (requires HF token for gated models):
 
 ```bash
-huggingface-cli login
+hf auth login
 # Models: mistralai/Mistral-Nemo-Base-2407, Qwen/Qwen3-14B, google/gemma-3-12b-pt
 ```
 
@@ -633,8 +656,8 @@ A Python library that enables 4-bit and 8-bit quantization of model weights, req
 **`accelerate`**
 A Hugging Face library that handles distributed training across multiple GPUs or machines with minimal code changes.
 
-**`huggingface-cli login`**
-A command-line tool to authenticate with the Hugging Face Hub. Required to download gated models (models that require accepting a license agreement before access is granted).
+**`hf auth login`**
+A command-line tool to authenticate with the Hugging Face Hub. Required to download gated models (models that require accepting a license agreement before access is granted). Installed via the standalone installer at `https://hf.co/cli/install.sh`; the binary is `hf` (not `huggingface-cli`).
 
 ---
 
