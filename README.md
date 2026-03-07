@@ -36,7 +36,7 @@ estimator = HuggingFace(
     hyperparameters={
         "model_id": "mistralai/Mistral-Nemo-Base-2407",
         "max_steps": 325,
-        "bf16": True,
+        "use_4bit": True,
     }
 )
 
@@ -47,20 +47,20 @@ estimator.fit({"train": "s3://your-telco-llm-bucket/data/train.jsonl"})
 4. For Qwen3-14B QLoRA (4-bit, multi-GPU), use `ml.g5.12xlarge` (4× A10G GPUs) instead.
 5. Monitor job progress in the [SageMaker Console](https://console.aws.amazon.com/sagemaker) → **Training** → **Training jobs**.
 
-> **Why does Mistral-Nemo (12B BF16 LoRA) fit on 1 GPU while Qwen3-14B (4-bit QLoRA) needs 4?**
+> **Why do all three models use QLoRA or need careful memory management on A10G GPUs?**
 >
-> It comes down to memory requirements and quantization strategy.
+> It comes down to memory requirements during training — not just weight storage.
 >
-> Mistral-Nemo-Base-2407 is a 12B model trained in BF16 with LoRA (not quantized). LoRA only trains a small set of adapter weights while keeping the base model frozen, so the memory footprint is manageable on a single A10G (24GB VRAM). The math works out roughly as: 12B params × 2 bytes (BF16) ≈ 24GB, which just fits on one A10G with careful batch sizing.
+> Mistral-Nemo-Base-2407 is a 12B model. At BF16, that's 12B × 2 bytes ≈ 24GB — exactly the A10G's VRAM limit. While the weights technically fit, there's zero headroom left for activations, gradients, or optimizer states during training. In practice, `model.to("cuda")` OOMs before training even starts. QLoRA compresses weights to 4-bit (~6GB), leaving ~18GB for training overhead.
 >
-> Qwen3-14B is larger (14B params) and uses QLoRA with 4-bit quantization via bitsandbytes. You'd think 4-bit would need less memory, and it does for the weights themselves, but there are a few reasons it still needs more GPUs:
+> Qwen3-14B is larger (14B params) and uses QLoRA with 4-bit quantization via bitsandbytes. Even at 4-bit the activations and optimizer states during training are heavy:
 >
 > - Qwen3-14B has a larger architecture with more attention heads and a wider hidden dimension than Mistral-Nemo, so even at 4-bit the activations and optimizer states during training are heavier
 > - QLoRA dequantizes weights to BF16 during the forward/backward pass for gradient computation, so peak memory spikes significantly beyond what the static 4-bit footprint suggests
 > - 14B × 0.5 bytes (4-bit) ≈ 7GB for weights alone, but with activations, gradients, and optimizer states you can easily hit 60–80GB during training
 > - The 4× A10G on `ml.g5.12xlarge` gives you 96GB total VRAM, which handles those spikes comfortably across devices via `accelerate`
 >
-> The counterintuitive result: a smaller model in BF16 with LoRA fits on 1 GPU, while a larger model in 4-bit QLoRA still needs 4 GPUs because training-time memory pressure is dominated by activations and optimizer state, not just weight storage.
+> The counterintuitive result: a smaller model in 4-bit QLoRA fits on 1 GPU, while a larger model in 4-bit QLoRA still needs 4 GPUs because training-time memory pressure is dominated by activations and optimizer state, not just weight storage.
 
 > Important: pin `pytorch_version="2.1"` in the estimator. `torch 2.10+cu128` has a CUBLAS regression that breaks all bf16/fp16 training.
 
@@ -200,7 +200,7 @@ hf auth login
 3. Submit the SageMaker Training Job using `submit_training.py` (repo root):
 
 ```bash
-# Ministral 3 14B — BF16 LoRA on 1× A10G (ml.g5.2xlarge)
+# Ministral 3 14B — QLoRA 4-bit on 1× A10G (ml.g5.2xlarge)
 python submit_training.py \
   --role arn:aws:iam::ACCOUNT_ID:role/SageMakerRole \
   --bucket your-telco-llm-bucket \
@@ -215,6 +215,8 @@ python submit_training.py \
   --max_steps 325
 
 # Gemma 3 12B — BF16 LoRA on 1× A10G (ml.g5.2xlarge)
+# Note: Gemma 3 12B fits in BF16 on a single A10G because its architecture
+# is more memory-efficient than Mistral-Nemo despite similar param count.
 python submit_training.py \
   --role arn:aws:iam::ACCOUNT_ID:role/SageMakerRole \
   --bucket your-telco-llm-bucket \
@@ -226,11 +228,11 @@ The script auto-selects the correct instance type and quantization mode per mode
 
 > Why `use_4bit` differs per model:
 >
-> - **Mistral-Nemo-Base-2407** (`use_4bit=False`): 12B params × 2 bytes (BF16) ≈ 24GB, which just fits on a single A10G (24GB VRAM). BF16 LoRA trains cleanly on one GPU with good numerical stability — no quantization needed.
+> - **Mistral-Nemo-Base-2407** (`use_4bit=True`): 12B params × 2 bytes (BF16) ≈ 24GB — exactly the A10G's 24GB VRAM limit. While weights technically fit, there's zero headroom for activations, gradients, or optimizer states. In practice, `model.to("cuda")` OOMs before training starts. QLoRA compresses weights to 4-bit (~6GB), leaving ~18GB for training overhead on a single A10G.
 > - **Qwen3-14B** (`use_4bit=True`): 14B params × 2 bytes (BF16) ≈ 28GB — already over a single A10G's limit. QLoRA compresses weights to 4-bit (~7GB static), but training-time activations and optimizer states push peak memory to 60–80GB, requiring 4× A10G (`ml.g5.12xlarge`, 96GB total). Without 4-bit you'd need A100s.
-> - **Gemma-3-12b-pt** (`use_4bit=False`): Same reasoning as Mistral-Nemo — 12B in BF16 fits on one A10G. Google trained Gemma in BF16 natively, so keeping it in BF16 preserves numerical fidelity and avoids the dequantization overhead of QLoRA.
+> - **Gemma-3-12b-pt** (`use_4bit=False`): 12B in BF16 fits on one A10G. Google trained Gemma in BF16 natively with a more memory-efficient architecture, so keeping it in BF16 preserves numerical fidelity and avoids the dequantization overhead of QLoRA.
 >
-> The pattern: use BF16 LoRA when the model fits in available VRAM, use QLoRA only when it doesn't. Quantization adds complexity (dequantization during forward/backward pass, potential precision loss) so it's only worth it when necessary.
+> The pattern: use BF16 LoRA only when the model fits in available VRAM with headroom for training. Use QLoRA when it doesn't. Quantization adds complexity (dequantization during forward/backward pass, potential precision loss) so it's only worth it when necessary.
 
 Monitor training progress:
 
@@ -277,7 +279,7 @@ Training cost reference:
 
 | Model | Method | GPU | Training Cost |
 |-------|--------|-----|---------------|
-| Ministral 3 14B | BF16 LoRA | 1× L40S | $2.57 |
+| Ministral 3 14B | QLoRA 4-bit | 1× L40S | $2.57 |
 | Qwen3-14B V5 | QLoRA 4-bit | 4× L4 | $2.42 |
 | Gemma 3 12B | BF16 LoRA | 1× L40S | $3.44 |
 

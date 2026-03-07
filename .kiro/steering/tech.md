@@ -21,7 +21,7 @@
 - AWS Outposts / Local Zones — on-premise edge deployment
 
 ## Models
-- `mistralai/Mistral-Nemo-Base-2407` (Ministral 3 14B) — BF16 LoRA
+- `mistralai/Mistral-Nemo-Base-2407` (Ministral 3 14B) — QLoRA 4-bit
 - `Qwen/Qwen3-14B` — QLoRA 4-bit
 - `google/gemma-3-12b-pt` — BF16 LoRA
 
