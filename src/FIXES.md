@@ -79,3 +79,40 @@ Then resubmitted, producing a new job:
 Always make at least a trivial change to any file in `source_dir` before resubmitting
 a SageMaker job after a code fix. Alternatively, use a unique `base_job_name` or
 explicitly set `code_location` to a new S3 prefix to guarantee a fresh upload.
+
+
+---
+
+## [2026-03-07] transformers==4.36 DLC incompatible with Mistral-Nemo-Base-2407
+
+**Job:** `telco-rca-mistral-nemo-base-2407-2026-03-07-02-20-45-264`  
+**Status:** Failed after ~451s (same shape error, different root cause)
+
+### Error
+
+```
+ValueError: Trying to set a tensor of shape torch.Size([1024, 5120]) in "weight"
+(which has shape torch.Size([1280, 5120])), this looks incorrect.
+```
+
+Traceback pointed to `transformers/modeling_utils.py → _load_state_dict_into_meta_model` — the crash happened inside `AutoModelForCausalLM.from_pretrained`, before PEFT even ran.
+
+### Root Cause
+
+`transformers==4.36` (the originally pinned DLC version) predates Mistral-Nemo-Base-2407 (released July 2024). The older transformers loaded an incorrect architecture config for the model, causing a weight shape mismatch when loading the checkpoint into the meta model. This was misidentified initially as a PEFT/LoRA target module issue.
+
+### Fix
+
+Upgraded the SageMaker DLC to the next available version that supports Mistral-Nemo and has a valid image:
+
+| Parameter | Before | After |
+|---|---|---|
+| `transformers_version` | `4.36` | `4.46.1` |
+| `pytorch_version` | `2.1` | `2.3.0` |
+| `py_version` | `py310` | `py311` |
+
+DLC image used: `763104351884.dkr.ecr.us-east-1.amazonaws.com/huggingface-pytorch-training:2.3.0-transformers4.46.1-gpu-py311-cu121-ubuntu20.04`
+
+> Note: The `pytorch_version="2.1"` pin in the README was intended to avoid a CUBLAS regression in `torch 2.10+cu128`. That regression does not affect `2.3.0+cu121`, so the upgrade is safe.
+
+New job submitted: `telco-rca-mistral-nemo-base-2407-2026-03-07-02-45-53-116`
