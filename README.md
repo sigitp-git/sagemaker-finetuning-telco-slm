@@ -224,6 +224,14 @@ python submit_training.py \
 
 The script auto-selects the correct instance type and quantization mode per model. Add `--wait` to block and stream status until the job completes.
 
+> Why `use_4bit` differs per model:
+>
+> - **Mistral-Nemo-Base-2407** (`use_4bit=False`): 12B params × 2 bytes (BF16) ≈ 24GB, which just fits on a single A10G (24GB VRAM). BF16 LoRA trains cleanly on one GPU with good numerical stability — no quantization needed.
+> - **Qwen3-14B** (`use_4bit=True`): 14B params × 2 bytes (BF16) ≈ 28GB — already over a single A10G's limit. QLoRA compresses weights to 4-bit (~7GB static), but training-time activations and optimizer states push peak memory to 60–80GB, requiring 4× A10G (`ml.g5.12xlarge`, 96GB total). Without 4-bit you'd need A100s.
+> - **Gemma-3-12b-pt** (`use_4bit=False`): Same reasoning as Mistral-Nemo — 12B in BF16 fits on one A10G. Google trained Gemma in BF16 natively, so keeping it in BF16 preserves numerical fidelity and avoids the dequantization overhead of QLoRA.
+>
+> The pattern: use BF16 LoRA when the model fits in available VRAM, use QLoRA only when it doesn't. Quantization adds complexity (dequantization during forward/backward pass, potential precision loss) so it's only worth it when necessary.
+
 Monitor training progress:
 
 ```bash
