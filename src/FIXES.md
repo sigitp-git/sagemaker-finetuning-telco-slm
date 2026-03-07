@@ -204,3 +204,45 @@ Three changes to `train.py`:
    but peak activation memory per step drops 4×.
 
 New job submitted: `telco-rca-mistral-nemo-base-2407-2026-03-07-04-06-05-439`
+
+
+---
+
+## [2026-03-07] CUDA OOM during model loading — Mistral-Nemo BF16 doesn't fit on single A10G
+
+**Job:** `telco-rca-mistral-nemo-base-2407-2026-03-07-03-19-15-070`  
+**Status:** Failed after ~592s
+
+### Error
+
+```
+torch.cuda.OutOfMemoryError: CUDA out of memory. Tried to allocate 140.00 MiB.
+```
+
+Crash occurred at shard 4/5 during `AutoModelForCausalLM.from_pretrained` inside
+`_load_state_dict_into_meta_model → set_module_tensor_to_device`.
+
+### Root Cause
+
+Mistral-Nemo-Base-2407 at BF16 is 12B params × 2 bytes ≈ 24GB — exactly the A10G VRAM
+limit. Loading directly to `cuda:0` leaves zero headroom for the remaining shards,
+activations, or optimizer states, causing OOM mid-load.
+
+### Fix
+
+Changed to `device_map="cpu"` for BF16 LoRA to force the full model onto CPU RAM first.
+After PEFT wrapping on CPU, the model is moved to GPU with gradient checkpointing enabled
+to keep training-time VRAM usage within the 24GB limit.
+
+```python
+# Before
+load_kwargs["device_map"] = {"": 0}  # OOM — 24GB model on 24GB GPU leaves no headroom
+
+# After
+load_kwargs["device_map"] = "cpu"    # load on CPU → PEFT wrap → move to GPU
+# then after get_peft_model():
+model = model.to("cuda")
+model.gradient_checkpointing_enable()
+```
+
+New job submitted: `telco-rca-mistral-nemo-base-2407-2026-03-07-14-53-48-076`
