@@ -226,6 +226,15 @@ python submit_training.py \
 
 The script auto-selects the correct instance type and quantization mode per model. Add `--wait` to block and stream status until the job completes.
 
+> **Why `--max_steps 325`?**
+>
+> The training set has 1,300 examples. With `per_device_train_batch_size=1` and `gradient_accumulation_steps=8`, the effective batch size is 8:
+>
+> - 1,300 examples ÷ 8 effective batch size = **162.5 steps per epoch**
+> - 325 steps ÷ 162.5 = **~2 epochs** (the model sees the full dataset twice)
+>
+> Two epochs is a common sweet spot for LoRA/QLoRA fine-tuning on small datasets — enough to learn the task without overfitting. The training logs confirmed this: `epoch: 2.01` at step 325, and the loss was still decreasing through epoch 2 (0.96 at step 300) without signs of overfitting.
+
 > Why `use_4bit` differs per model:
 >
 > - **Mistral-Nemo-Base-2407** (`use_4bit=True`): 12B params × 2 bytes (BF16) ≈ 24GB — exactly the A10G's 24GB VRAM limit. While weights technically fit, there's zero headroom for activations, gradients, or optimizer states. In practice, `model.to("cuda")` OOMs before training starts. QLoRA compresses weights to 4-bit (~6GB), leaving ~18GB for training overhead on a single A10G.
