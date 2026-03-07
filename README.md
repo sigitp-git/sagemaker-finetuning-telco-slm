@@ -267,6 +267,13 @@ done
 
 **Mistral-Nemo QLoRA 4-bit — Training Output (Completed)**
 
+```bash
+# Stream the last training steps from CloudWatch logs
+aws logs tail /aws/sagemaker/TrainingJobs \
+  --log-stream-name-prefix <job-name> \
+  --since 1h 2>/dev/null | tail -40
+```
+
 ```
  98%|█████████▊| 320/325 [40:22<00:34,  6.85s/it]
  99%|█████████▉| 321/325 [40:29<00:27,  6.97s/it]
