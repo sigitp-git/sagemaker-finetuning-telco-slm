@@ -285,3 +285,134 @@ activations and optimizer states on the 24GB A10G.
 ```
 
 New job submitted: `telco-rca-mistral-nemo-base-2407-2026-03-07-18-19-25-833`
+
+
+---
+
+## [2026-03-07] transformers==4.46.1 DLC does not support Qwen3 architecture
+
+**Job:** `telco-rca-qwen3-14b-2026-03-07-20-13-17-904`  
+**Status:** Failed after ~266s
+
+### Error
+
+```
+ValueError: The checkpoint you are trying to load has model type `qwen3`
+but Transformers does not recognize this architecture.
+```
+
+### Root Cause
+
+`transformers==4.46.1` (the DLC version used for Mistral-Nemo) predates Qwen3 (released April 2025).
+Qwen3 support was added in `transformers>=4.51`. The SageMaker `HuggingFace` estimator's
+`transformers_version` parameter only maps to pre-built DLC images, and `4.51` is not available
+as a named version.
+
+### Fix
+
+Switched from the `HuggingFace` estimator (which requires named version strings) to the base
+`Estimator` class with an explicit `image_uri` pointing to the latest HuggingFace training DLC:
+
+```
+huggingface-pytorch-training:2.8.0-transformers4.56.2-gpu-py312-cu129-ubuntu22.04
+```
+
+This DLC includes transformers 4.56.2 which supports all three model architectures
+(Mistral-Nemo, Qwen3, Gemma 3).
+
+New job submitted: `telco-rca-qwen3-14b-2026-03-07-20-45-55-612`
+
+
+---
+
+## [2026-03-07] Gemma 3 12B — gated model requires Hugging Face authentication
+
+**Job:** `telco-rca-gemma-3-12b-pt-2026-03-07-20-13-29-885`  
+**Status:** Failed after ~241s
+
+### Error
+
+```
+OSError: You are trying to access a gated repo.
+Make sure to have access to it at https://huggingface.co/google/gemma-3-12b-pt.
+401 Client Error. Cannot access gated repo. Access to model google/gemma-3-12b-pt
+is restricted. You must be authenticated to access it.
+```
+
+### Root Cause
+
+`google/gemma-3-12b-pt` is a gated model on Hugging Face — it requires:
+1. Accepting the Gemma license at https://huggingface.co/google/gemma-3-12b-pt
+2. Passing a valid HF token to the training container
+
+The original `submit_training.py` had no mechanism to pass an HF token to the SageMaker job.
+
+### Fix
+
+Two changes:
+
+1. Added `--hf_token` CLI argument to `submit_training.py` that passes the token as an
+   environment variable (`HF_TOKEN`) to the training container.
+
+2. Added HF token login at the start of `train.py`:
+
+```python
+hf_token = os.environ.get("HF_TOKEN")
+if hf_token:
+    from huggingface_hub import login
+    login(token=hf_token)
+```
+
+New job submitted: `telco-rca-gemma-3-12b-pt-2026-03-07-20-46-46-852`
+
+
+---
+
+## [2026-03-07] Qwen3-14B QLoRA — "element 0 of tensors does not require grad"
+
+**Job:** `telco-rca-qwen3-14b-2026-03-07-21-14-26-666`  
+**Status:** Failed at step 0/325
+
+### Error
+
+```
+RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
+```
+
+Crash during `loss.backward()` at the very first training step.
+
+### Root Cause
+
+With QLoRA 4-bit quantized models, the base model's embedding layer outputs don't carry
+`requires_grad=True`. When the backward pass tries to compute gradients through the frozen
+quantized layers into the LoRA adapters, PyTorch raises this error because the computation
+graph is disconnected at the embedding output.
+
+This didn't affect Mistral-Nemo because the older transformers 4.46.1 DLC handled gradient
+flow differently. The newer DLC (transformers 4.56.2) is stricter about gradient requirements.
+
+### Fix
+
+Two changes to `train.py`:
+
+1. Added `model.enable_input_require_grads()` after PEFT wrapping for QLoRA models. This
+   ensures embedding outputs carry gradients so the backward pass can flow through the
+   frozen base model into the LoRA adapter layers.
+
+2. Changed `gradient_checkpointing` from `not args.use_4bit` (disabled for QLoRA) to
+   always `True`. Gradient checkpointing helps with memory on multi-GPU setups and ensures
+   proper gradient flow through the model.
+
+```python
+# After get_peft_model():
+if args.use_4bit:
+    model.enable_input_require_grads()
+
+# Always enable gradient checkpointing (was previously disabled for QLoRA)
+model.gradient_checkpointing_enable()
+
+# In SFTConfig:
+gradient_checkpointing=True,  # was: not args.use_4bit
+```
+
+New job submitted: (pending resubmit)

@@ -17,9 +17,9 @@ import os
 import json
 import torch
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 
 LORA_CONFIGS = {
     # model_id -> (r, lora_alpha, target_modules); Mistral-Nemo uses GQA — target all 4 proj layers
@@ -62,6 +62,13 @@ def main():
     print(f"Train file: {train_file}")
     print(f"Max steps: {args.max_steps} | BF16: {args.bf16} | 4-bit: {args.use_4bit}")
 
+    # Authenticate with Hugging Face for gated models (e.g. Gemma)
+    hf_token = os.environ.get("HF_TOKEN")
+    if hf_token:
+        from huggingface_hub import login
+        login(token=hf_token)
+        print("Authenticated with Hugging Face (gated model access)")
+
     # Quantization config for QLoRA
     bnb_config = None
     if args.use_4bit:
@@ -100,16 +107,25 @@ def main():
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
+    # QLoRA 4-bit: embedding outputs don't carry gradients by default — enable them so the
+    # backward pass can flow through the frozen base model into the LoRA adapters.
+    # Without this, Qwen3 (and other models on newer transformers) hits:
+    #   RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
+    if args.use_4bit:
+        model.enable_input_require_grads()
+
     # Move to GPU after PEFT wrapping (BF16 only — QLoRA already placed by device_map)
     if not args.use_4bit:
         model = model.to("cuda")
-        # Gradient checkpointing trades compute for memory — essential for 12B BF16 on 24GB VRAM
-        model.gradient_checkpointing_enable()
+
+    # Gradient checkpointing trades compute for memory — essential for BF16 on 24GB VRAM,
+    # and also helps QLoRA on multi-GPU setups. Enable for all configurations.
+    model.gradient_checkpointing_enable()
 
     dataset = load_dataset("json", data_files=train_file, split="train")
     dataset = dataset.map(format_example, remove_columns=dataset.column_names)
 
-    training_args = TrainingArguments(
+    training_args = SFTConfig(
         output_dir=args.output_dir,
         max_steps=args.max_steps,
         per_device_train_batch_size=args.per_device_train_batch_size,
@@ -117,21 +133,21 @@ def main():
         learning_rate=args.learning_rate,
         bf16=args.bf16 and not args.use_4bit,
         fp16=False,
-        gradient_checkpointing=not args.use_4bit,
+        gradient_checkpointing=True,
         logging_steps=25,
         save_steps=args.max_steps,
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         report_to="none",
+        max_length=1024,
+        dataset_text_field="text",
     )
 
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
-        dataset_text_field="text",
-        max_seq_length=1024,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
     )
     trainer.train()
 
