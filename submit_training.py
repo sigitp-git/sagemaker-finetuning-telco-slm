@@ -9,17 +9,25 @@ Usage:
     [--instance_type ml.g5.2xlarge] \
     [--max_steps 325] \
     [--use_4bit]        # enable QLoRA for Qwen3-14B
+    [--hf_token HF_TOKEN]  # required for gated models (Gemma)
 """
 import argparse
 import time
 import boto3
 import sagemaker
-from sagemaker.huggingface import HuggingFace
+from sagemaker.estimator import Estimator
+
+# Latest HuggingFace DLC with transformers 4.56.2 — supports Qwen3, Gemma 3, Mistral-Nemo
+# The 4.46.1 DLC predates Qwen3 (needs 4.51+). Using image_uri directly bypasses SDK version mapping.
+TRAINING_IMAGE_URI = (
+    "763104351884.dkr.ecr.{region}.amazonaws.com/"
+    "huggingface-pytorch-training:2.8.0-transformers4.56.2-gpu-py312-cu129-ubuntu22.04"
+)
 
 MODEL_DEFAULTS = {
     "mistralai/Mistral-Nemo-Base-2407": {"instance_type": "ml.g5.2xlarge",  "use_4bit": True},
     "Qwen/Qwen3-14B":                   {"instance_type": "ml.g5.12xlarge", "use_4bit": True},
-    "google/gemma-3-12b-pt":            {"instance_type": "ml.g5.2xlarge",  "use_4bit": False},
+    "google/gemma-3-12b-pt":            {"instance_type": "ml.g5.2xlarge",  "use_4bit": True},
 }
 
 def parse_args():
@@ -31,6 +39,7 @@ def parse_args():
     parser.add_argument("--instance_type", default=None,   help="Override default instance type")
     parser.add_argument("--max_steps",     type=int, default=325)
     parser.add_argument("--use_4bit",      action="store_true", help="Enable QLoRA 4-bit (for Qwen3-14B)")
+    parser.add_argument("--hf_token",      default=None,   help="Hugging Face token for gated models (Gemma)")
     parser.add_argument("--wait",          action="store_true", help="Block until job completes")
     return parser.parse_args()
 
@@ -65,22 +74,21 @@ def main():
     sm_session = sagemaker.Session(boto_session=boto_session)
     sm_client = boto_session.client("sagemaker")
 
-    estimator = HuggingFace(
+    estimator = Estimator(
         entry_point="train.py",
         source_dir="./src",
         instance_type=instance_type,
         instance_count=1,
         role=args.role,
         sagemaker_session=sm_session,
-        transformers_version="4.46.1",
-        pytorch_version="2.3.0",
-        py_version="py311",
+        image_uri=TRAINING_IMAGE_URI.format(region=args.region),
         hyperparameters={
             "model_id":   args.model_id,
             "max_steps":  args.max_steps,
             "bf16":       not use_4bit,
             "use_4bit":   use_4bit,
         },
+        environment={"HF_TOKEN": args.hf_token} if args.hf_token else {},
         output_path=f"s3://{args.bucket}/output/{slug}/",
         base_job_name=base_job_name,
     )

@@ -25,7 +25,7 @@ LORA_CONFIGS = {
     # model_id -> (r, lora_alpha, target_modules); Mistral-Nemo uses GQA — target all 4 proj layers
     "mistralai/Mistral-Nemo-Base-2407": (16, 32, ["q_proj", "k_proj", "v_proj", "o_proj"]),
     "Qwen/Qwen3-14B":                   (16, 32, ["q_proj", "v_proj", "k_proj", "o_proj"]),
-    "google/gemma-3-12b-pt":            (16, 32, ["q_proj", "v_proj"]),
+    "google/gemma-3-12b-pt":            (16, 32, ["q_proj", "v_proj", "k_proj", "o_proj"]),
 }
 
 

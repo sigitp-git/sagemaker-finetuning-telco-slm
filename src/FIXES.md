@@ -416,3 +416,50 @@ gradient_checkpointing=True,  # was: not args.use_4bit
 ```
 
 New job submitted: (pending resubmit)
+
+
+---
+
+## [2026-03-07] Gemma 3 12B BF16 OOM on single A10G — switched to QLoRA 4-bit
+
+**Job:** `telco-rca-gemma-3-12b-pt-2026-03-07-21-59-25-817`  
+**Status:** Failed (CUDA OOM)
+
+### Error
+
+```
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 114.00 MiB.
+GPU 0 has a total capacity of 22.30 GiB of which 34.69 MiB is free.
+```
+
+OOM during `model.to("cuda")` after CPU load and PEFT wrapping.
+
+### Root Cause
+
+Same issue as Mistral-Nemo: Gemma 3 12B at BF16 is ~24GB, which exactly fills the 24GB
+A10G on `ml.g5.2xlarge`. Moving the full model to GPU leaves zero headroom for activations,
+gradients, or optimizer states.
+
+### Fix
+
+Switched `google/gemma-3-12b-pt` from BF16 LoRA to QLoRA 4-bit in `submit_training.py`
+`MODEL_DEFAULTS`. At 4-bit, weights are ~6GB leaving ~18GB for training overhead.
+
+Also expanded LoRA target modules from `["q_proj", "v_proj"]` to all 4 attention projections
+`["q_proj", "v_proj", "k_proj", "o_proj"]` for consistency with the other models.
+
+```python
+# submit_training.py MODEL_DEFAULTS
+# Before
+"google/gemma-3-12b-pt": {"instance_type": "ml.g5.2xlarge", "use_4bit": False},
+# After
+"google/gemma-3-12b-pt": {"instance_type": "ml.g5.2xlarge", "use_4bit": True},
+
+# train.py LORA_CONFIGS
+# Before
+"google/gemma-3-12b-pt": (16, 32, ["q_proj", "v_proj"]),
+# After
+"google/gemma-3-12b-pt": (16, 32, ["q_proj", "v_proj", "k_proj", "o_proj"]),
+```
+
+New job submitted: (pending resubmit)
