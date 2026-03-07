@@ -72,7 +72,7 @@ def main():
         instance_count=1,
         role=args.role,
         sagemaker_session=sm_session,
-        transformers_version="4.36",
+        transformers_version="4.46",
         pytorch_version="2.1",
         py_version="py310",
         hyperparameters={
