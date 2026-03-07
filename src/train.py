@@ -1,9 +1,12 @@
 """
 SageMaker entry point for LoRA/QLoRA fine-tuning of 3GPP RCA models.
-Supports: Mistral-Nemo-Base-2407 (BF16 LoRA), Qwen3-14B (QLoRA 4-bit), Gemma-3-12B (BF16 LoRA)
+Supports: Mistral-Nemo-Base-2407 (QLoRA 4-bit), Qwen3-14B (QLoRA 4-bit), Gemma-3-12B (BF16 LoRA)
+
+Note: Mistral-Nemo BF16 ≈ 24GB which exactly fills the A10G — no headroom for training.
+      Use 4-bit QLoRA for Mistral-Nemo on ml.g5.2xlarge.
 
 Usage (local):
-  python src/train.py --model_id mistralai/Mistral-Nemo-Base-2407 --bf16 True
+  python src/train.py --model_id mistralai/Mistral-Nemo-Base-2407 --use_4bit True
 
 Usage (SageMaker): entry_point="train.py", source_dir="./src"
   hyperparameters passed as CLI args by SageMaker.

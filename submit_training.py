@@ -17,7 +17,7 @@ import sagemaker
 from sagemaker.huggingface import HuggingFace
 
 MODEL_DEFAULTS = {
-    "mistralai/Mistral-Nemo-Base-2407": {"instance_type": "ml.g5.2xlarge",  "use_4bit": False},
+    "mistralai/Mistral-Nemo-Base-2407": {"instance_type": "ml.g5.2xlarge",  "use_4bit": True},
     "Qwen/Qwen3-14B":                   {"instance_type": "ml.g5.12xlarge", "use_4bit": True},
     "google/gemma-3-12b-pt":            {"instance_type": "ml.g5.2xlarge",  "use_4bit": False},
 }
