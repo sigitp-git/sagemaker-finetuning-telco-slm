@@ -44,8 +44,8 @@ def main():
     parser.add_argument("--model_id", default="mistralai/Mistral-Nemo-Base-2407")
     parser.add_argument("--max_steps", type=int, default=325)
     parser.add_argument("--bf16", type=lambda x: x.lower() == "true", default=True)
-    parser.add_argument("--per_device_train_batch_size", type=int, default=4)
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=2)
+    parser.add_argument("--per_device_train_batch_size", type=int, default=1)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=8)
     parser.add_argument("--learning_rate", type=float, default=2e-4)
     parser.add_argument("--use_4bit", type=lambda x: x.lower() == "true", default=False)
     parser.add_argument("--output_dir", default=os.environ.get("SM_OUTPUT_DATA_DIR", "./output"))
@@ -69,18 +69,19 @@ def main():
             bnb_4bit_use_double_quant=True,
         )
 
-    # For BF16 LoRA (non-quantized): load directly to cuda without device_map to avoid
-    # meta tensor offloading which breaks PEFT's get_peft_model() on single-GPU instances.
+    # For BF16 LoRA (non-quantized): load on CPU first with low_cpu_mem_usage=True to avoid
+    # OOM during weight loading on the 24GB A10G (12B BF16 ≈ 24GB leaves zero headroom).
+    # PEFT wraps the CPU model, then we move to GPU after — this avoids the meta tensor issue
+    # and the OOM from loading directly to cuda:0.
     # For QLoRA (4-bit): device_map="auto" is required by bitsandbytes.
     load_kwargs = dict(
         torch_dtype=torch.bfloat16 if args.bf16 and not args.use_4bit else "auto",
         quantization_config=bnb_config,
         trust_remote_code=True,
+        low_cpu_mem_usage=True,
     )
     if args.use_4bit:
         load_kwargs["device_map"] = "auto"
-    else:
-        load_kwargs["device_map"] = {"": 0}  # force all layers onto cuda:0
 
     model = AutoModelForCausalLM.from_pretrained(args.model_id, **load_kwargs)
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, trust_remote_code=True)
@@ -95,6 +96,12 @@ def main():
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
+    # Move to GPU after PEFT wrapping (BF16 only — QLoRA already placed by device_map)
+    if not args.use_4bit:
+        model = model.to("cuda")
+        # Gradient checkpointing trades compute for memory — essential for 12B BF16 on 24GB VRAM
+        model.gradient_checkpointing_enable()
+
     dataset = load_dataset("json", data_files=train_file, split="train")
     dataset = dataset.map(format_example, remove_columns=dataset.column_names)
 
@@ -106,6 +113,7 @@ def main():
         learning_rate=args.learning_rate,
         bf16=args.bf16 and not args.use_4bit,
         fp16=False,
+        gradient_checkpointing=not args.use_4bit,
         logging_steps=25,
         save_steps=args.max_steps,
         warmup_ratio=0.05,
