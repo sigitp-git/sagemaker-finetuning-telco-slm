@@ -30,9 +30,9 @@ estimator = HuggingFace(
     instance_type="ml.g5.2xlarge",                 # 1× A10G GPU, equivalent to g6e.2xlarge
     instance_count=1,
     role="arn:aws:iam::ACCOUNT_ID:role/SageMakerRole",
-    transformers_version="4.36",
-    pytorch_version="2.1",
-    py_version="py310",
+    transformers_version="4.46.1",
+    pytorch_version="2.3.0",
+    py_version="py311",
     hyperparameters={
         "model_id": "mistralai/Mistral-Nemo-Base-2407",
         "max_steps": 325,
@@ -62,7 +62,7 @@ estimator.fit({"train": "s3://your-telco-llm-bucket/data/train.jsonl"})
 >
 > The counterintuitive result: a smaller model in 4-bit QLoRA fits on 1 GPU, while a larger model in 4-bit QLoRA still needs 4 GPUs because training-time memory pressure is dominated by activations and optimizer state, not just weight storage.
 
-> Important: pin `pytorch_version="2.1"` in the estimator. `torch 2.10+cu128` has a CUBLAS regression that breaks all bf16/fp16 training.
+> Important: pin `pytorch_version="2.3.0"` (with `cu121`) in the estimator. `torch 2.10+cu128` has a CUBLAS regression that breaks all bf16/fp16 training. The original `pytorch_version="2.1"` / `transformers_version="4.36"` DLC predates Mistral-Nemo and cannot load it — use `transformers_version="4.46.1"` with `pytorch_version="2.3.0"` and `py_version="py311"`.
 
 ---
 
@@ -293,6 +293,15 @@ sagemaker-training-toolkit INFO  Reporting training SUCCESS
 >
 **Mistral-Nemo QLoRA 4-bit — Training Metrics Log**
 
+```bash
+# Extract loss metrics from CloudWatch logs
+aws logs tail /aws/sagemaker/TrainingJobs \
+  --log-stream-name-prefix <job-name> \
+  --since 3h 2>/dev/null \
+  | grep "'loss'" \
+  | grep -oP "'loss': [0-9.]+.*'epoch': [0-9.]+"
+```
+
 ```
 Step  25  | loss: 3.4207 | grad_norm: 3.0827 | lr: 1.997e-04 | epoch: 0.15
 Step  50  | loss: 1.6251 | grad_norm: 2.5550 | lr: 1.944e-04 | epoch: 0.31
@@ -466,9 +475,9 @@ estimator = HuggingFace(
     entry_point="train.py",
     instance_type="ml.g5.2xlarge",
     instance_count=1,
-    transformers_version="4.36",
-    pytorch_version="2.1",
-    py_version="py310",
+    transformers_version="4.46.1",
+    pytorch_version="2.3.0",
+    py_version="py311",
     hyperparameters={"model_id": "mistralai/Mistral-Nemo-Base-2407", "epochs": 1}
 )
 estimator.fit({"train": "s3://your-telco-llm-bucket/data/train.jsonl"})
@@ -492,7 +501,7 @@ from sagemaker.huggingface import HuggingFaceModel
 
 model = HuggingFaceModel(model_data="s3://your-telco-llm-bucket/adapters/ministral/",
                           role="arn:aws:iam::ACCOUNT:role/SageMakerRole",
-                          transformers_version="4.36", pytorch_version="2.1")
+                          transformers_version="4.46.1", pytorch_version="2.3.0")
 predictor = model.deploy(instance_type="ml.g5.2xlarge", initial_instance_count=1)
 result = predictor.predict({"inputs": log_text})
 ```
@@ -761,7 +770,7 @@ NVIDIA's parallel computing platform and programming model that lets software us
 In the context of this benchmark:
 - PyTorch uses CUDA to run model training on the GPU. When you see `torch.cuda.is_available()`, it's checking whether a CUDA-capable GPU is present and accessible.
 - The `cu121` / `cu128` suffixes in DLC image names (e.g. `pytorch2.3.0-cu121`) refer to the CUDA toolkit version bundled in that container — `cu121` = CUDA 12.1, `cu128` = CUDA 12.8.
-- The CUBLAS regression mentioned in this guide (`torch 2.10+cu128`) is a bug in CUDA 12.8's linear algebra library (cuBLAS) that corrupts BF16/FP16 matrix multiplications during training — which is why we pin to `pytorch2.1` / `pytorch2.3.0+cu121`.
+- The CUBLAS regression mentioned in this guide (`torch 2.10+cu128`) is a bug in CUDA 12.8's linear algebra library (cuBLAS) that corrupts BF16/FP16 matrix multiplications during training — which is why we pin to `pytorch2.3.0+cu121`.
 - `device_map={"": 0}` in `train.py` means "put everything on `cuda:0`" — the first (and only) GPU on the `ml.g5.2xlarge` instance.
 
 **Deep Learning AMI (Amazon Machine Image)**

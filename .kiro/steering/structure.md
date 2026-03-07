@@ -1,14 +1,27 @@
 # Project Structure
 
-This is a documentation/guide repository. The primary artifact is `README.md` — a single-file, end-to-end guide. There is no application source tree yet.
+This is a documentation/guide repository. The primary artifact is `README.md` — a single-file, end-to-end guide. Source scripts live in `src/`.
 
 ## Current Layout
 
 ```
 /
-├── README.md          # Full benchmark guide (all steps)
+├── README.md              # Full benchmark guide (all steps)
+├── submit_training.py     # SageMaker job submission script
+├── src/
+│   ├── train.py           # SageMaker entry point for fine-tuning
+│   ├── generate_data.py   # Synthetic 3GPP data generation via Bedrock
+│   ├── evaluate.py        # Scoring script (F1, precision, recall, exact match)
+│   ├── evaluate_bedrock.py # Frontier model evaluation via Bedrock API
+│   ├── filter.py          # Sympathetic noise post-processing filter
+│   ├── report_html.py     # Generate self-contained HTML report from results.json
+│   ├── report_ppt.js      # Generate native .pptx via pptxgenjs (Node.js)
+│   └── FIXES.md           # Documented training job fixes and root causes
+├── data/
+│   ├── train.jsonl        # Training set (1,300 examples)
+│   └── test.jsonl         # Test set (1,000 examples)
 └── .kiro/
-    └── steering/      # Kiro AI steering rules
+    └── steering/          # Kiro AI steering rules
 ```
 
 ## Expected Structure (when code is added)

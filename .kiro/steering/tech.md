@@ -35,8 +35,8 @@
 - JSONL (`.jsonl`) — one JSON object per line, streamed for training
 
 ## Important Version Pins
-- `pytorch_version="2.1"` — required; torch 2.10+cu128 has a CUBLAS regression that breaks BF16/FP16 training
-- `transformers_version="4.36"`
+- `pytorch_version="2.3.0"` — required; torch 2.10+cu128 has a CUBLAS regression that breaks BF16/FP16 training. Use `2.3.0+cu121` which is unaffected.
+- `transformers_version="4.46.1"` — required for Mistral-Nemo-Base-2407 support (released July 2024). The original `4.36` predates this model and cannot load it.
 
 ## Common Commands
 
