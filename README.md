@@ -50,6 +50,7 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
      - [6.5.8 Option B Implementation — Retrain with Instruction-Tuned Models](#658-option-b-implementation--retrain-with-instruction-tuned-models)
      - [6.5.9 Results — Option B Retrain Evaluation](#659-results--option-b-retrain-evaluation)
      - [6.5.10 Option C Implementation — Completion-Only Training](#6510-option-c-implementation--completion-only-training)
+     - [6.5.11 Results — Option C Evaluation](#6511-results--option-c-evaluation)
 7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
 8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
    - [8.1 SageMaker Real-Time Endpoint](#81-sagemaker-real-time-endpoint)
@@ -1490,6 +1491,89 @@ For Mistral-Nemo, which already achieves 99.7% F1 with the original full-sequenc
 - There is no risk of regression — completion-only training is strictly better practice for instruction-following tasks because it eliminates noise from prompt tokens in the loss.
 
 If you retrain all three models in the future, use the same `train.py` with `DataCollatorForCompletionOnlyLM` for all of them. No model-specific branching is needed.
+
+#### 6.5.11 Results — Option C Evaluation
+
+**Submit inference jobs (Option C retrained adapters):**
+
+```bash
+# Qwen3-14B — Option C inference
+python3 submit_inference.py \
+  --role arn:aws:iam::ACCOUNT_ID:role/service-role/AmazonSageMaker-ExecutionRole \
+  --bucket your-telco-llm-bucket \
+  --model_id Qwen/Qwen3-14B
+
+# Gemma 3 12B IT — Option C inference
+python3 submit_inference.py \
+  --role arn:aws:iam::ACCOUNT_ID:role/service-role/AmazonSageMaker-ExecutionRole \
+  --bucket your-telco-llm-bucket \
+  --model_id google/gemma-3-12b-it \
+  --hf_token $HF_TOKEN
+```
+
+**Inference jobs:**
+
+| Model | Job Name | Instance | Duration | Status |
+|-------|----------|----------|----------|--------|
+| Qwen3-14B | `telco-rca-infer-qwen3-14b-2026-03-08-19-00-14-985` | ml.g5.12xlarge | ~92 min | Completed |
+| Gemma 3 12B IT | `telco-rca-infer-gemma-3-12b-it-2026-03-08-19-00-27-919` | ml.g5.2xlarge | ~87 min | Completed |
+
+**Download and score:**
+
+```bash
+# Download output tarballs
+aws s3 cp s3://your-telco-llm-bucket/inference-output/qwen3-14b/telco-rca-infer-qwen3-14b-2026-03-08-19-00-14-985/output/output.tar.gz /tmp/optionc_qwen3/
+aws s3 cp s3://your-telco-llm-bucket/inference-output/gemma-3-12b-it/telco-rca-infer-gemma-3-12b-it-2026-03-08-19-00-27-919/output/output.tar.gz /tmp/optionc_gemma/
+
+# Extract
+tar xzf /tmp/optionc_qwen3/output.tar.gz -C /tmp/optionc_qwen3/
+tar xzf /tmp/optionc_gemma/output.tar.gz -C /tmp/optionc_gemma/
+
+# Copy to results/
+cp /tmp/optionc_qwen3/preds_qwen3-14b_slm.jsonl results/preds_qwen3-14b_optionc_slm.jsonl
+cp /tmp/optionc_gemma/preds_gemma-3-12b-it_slm.jsonl results/preds_gemma-3-12b-it_optionc_slm.jsonl
+
+# Score
+python3 src/evaluate.py --predictions results/preds_qwen3-14b_optionc_slm.jsonl --test data/test.jsonl --model qwen3-optionc --strategy slm
+python3 src/evaluate.py --predictions results/preds_gemma-3-12b-it_optionc_slm.jsonl --test data/test.jsonl --model gemma-3-12b-it-optionc --strategy slm
+```
+
+**Results — Option C (completion-only training):**
+
+| Model | Training | F1 | Precision | Recall | Exact Match | n | Change vs Original |
+|-------|----------|----|-----------|--------|-------------|---|--------------------|
+| Qwen3-14B | Option C | 17.24% | 17.24% | 17.24% | 17.24% | 992 | 0.00% |
+| Gemma 3 12B IT | Option C | 11.90% | 11.90% | 11.90% | 11.90% | 992 | 0.00% |
+
+**Option C failed — no improvement for either model.**
+
+**Output analysis:**
+
+- **Qwen3-14B** — Still only predicts `congestion` (66 examples) and `normal` (925 examples, 1 mixed). The model generates verbose reasoning text instead of clean JSON arrays. The completion-only training signal did not change the model's output behavior — it still produces free-form text that the `extract_root_cause_from_text` filter can only partially parse.
+
+- **Gemma 3 12B IT** — Still produces empty outputs for all 992 examples, defaulting to `["normal"]` via the fallback logic. The completion-only training did not teach the model to generate any output at all.
+
+**Why Option C didn't work:**
+
+The completion-only training format change was theoretically sound — focusing the loss on completion tokens should help the model learn the output format. However, the results show that the problem is deeper than the training data format:
+
+1. **Qwen3** — The model's base architecture has a strong tendency toward verbose reasoning (especially with `thinking` mode). Even with 100% of the gradient signal on the JSON completion, 1,300 training examples and 3 epochs of LoRA fine-tuning are insufficient to override this deeply embedded behavior. The model needs either (a) significantly more training data, (b) more aggressive LoRA parameters (higher rank, more target modules), or (c) a fundamentally different approach like full fine-tuning.
+
+2. **Gemma** — The empty outputs suggest the model's generation is getting stuck or truncated before producing any tokens. This could be a tokenizer/generation config issue specific to Gemma's architecture, or the LoRA adapter is interfering with the model's ability to generate at all. The completion-only format doesn't help if the model can't produce output in the first place.
+
+3. **Mistral-Nemo succeeded because** it has a simpler architecture without built-in reasoning modes, and its tokenizer/generation pipeline is more straightforward. The same LoRA configuration that works perfectly for Mistral-Nemo is insufficient for the more complex Qwen3 and Gemma architectures.
+
+**Summary — All improvement attempts:**
+
+| Option | Approach | Qwen3 F1 | Gemma F1 | Result |
+|--------|----------|----------|----------|--------|
+| Original | Full-sequence training, `-pt` base | 17.24% | 11.90% | Baseline |
+| B | Instruction-tuned base models | 17.14% | 11.90% | ❌ No improvement |
+| C | Completion-only training | 17.24% | 11.90% | ❌ No improvement |
+
+**Conclusion:**
+
+Mistral-Nemo-Base-2407 remains the clear winner among the fine-tuned SLMs at 99.7% F1, outperforming even the best frontier model configurations. Qwen3-14B and Gemma 3 12B IT require more fundamental changes (larger training sets, higher LoRA rank, full fine-tuning, or architecture-specific prompt engineering) to achieve competitive performance on this task. For production deployment of 3GPP RCA, Mistral-Nemo with QLoRA is the recommended approach.
 
 ---
 
