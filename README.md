@@ -573,6 +573,16 @@ Step 325  | loss: 5.1441 | grad_norm: 0.00 | lr: 5.202e-09 | epoch: 2.01
 > | Qwen3-14B | QLoRA 4-bit | ml.g5.12xlarge (4× A10G) | 325/325 | ~93 min | 0.605 | 0.582 | 86.8% |
 > | Gemma 3 12B | QLoRA 4-bit | ml.g5.2xlarge (1× A10G) | 325/325 | ~87 min | 5.144 | 4.920 | 86.5% |
 >
+> **Column definitions:**
+> - **Model** — Hugging Face model ID used as the base for fine-tuning.
+> - **Method** — Fine-tuning technique. All three models use QLoRA 4-bit (NF4 quantization with LoRA rank 16).
+> - **Instance** — SageMaker instance type and GPU count. `ml.g5.2xlarge` has 1× NVIDIA A10G (24 GB); `ml.g5.12xlarge` has 4× A10G (96 GB total). Qwen3-14B required the larger instance due to higher memory demands from its architecture.
+> - **Steps** — Training steps completed out of total. All three ran the full 325 steps (1,300 examples ÷ batch size 4 = 325).
+> - **Time** — Wall-clock training time on SageMaker (excludes container startup and S3 upload).
+> - **Final Loss** — Cross-entropy loss on the last training step. Lower is generally better, but loss scales are not comparable across models due to different tokenizers and vocabulary sizes.
+> - **Avg Loss** — Mean training loss across all 325 steps.
+> - **Token Acc** — Mean token-level accuracy (`mean_token_accuracy`), the percentage of next-token predictions the model got right during training. Mistral-Nemo shows "—" because it was trained on the older DLC image (`transformers 4.46.1`), which does not report this metric. Qwen3 and Gemma used the newer DLC (`transformers 4.56.2`), which includes `mean_token_accuracy` in the training logs.
+>
 > All three adapters are saved to S3 and ready for evaluation in Step 6. The loss scales differ across models due to architecture and tokenizer differences — the evaluation metrics (F1, precision, recall) in Step 6 will provide the true apples-to-apples comparison.
 
 4. Save the LoRA adapter and upload to S3:
