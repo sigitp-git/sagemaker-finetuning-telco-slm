@@ -44,6 +44,7 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
      - [6.5.2 Submit Inference Jobs](#652-submit-inference-jobs)
      - [6.5.3 Submitted Inference Jobs](#653-submitted-inference-jobs)
      - [6.5.4 Score SLM Predictions](#654-score-slm-predictions)
+     - [6.5.5 Results — SLM Evaluation](#655-results--slm-evaluation)
 7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
 8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
    - [8.1 SageMaker Real-Time Endpoint](#81-sagemaker-real-time-endpoint)
@@ -1168,22 +1169,65 @@ aws sagemaker describe-training-job --training-job-name telco-rca-infer-gemma-3-
 
 #### 6.5.4 Score SLM Predictions
 
-After each inference job completes, score the predictions:
+After each inference job completes, download the output tarballs from S3, extract the prediction files, and score them:
 
 ```bash
-# Download predictions from S3
-aws s3 cp s3://your-telco-llm-bucket/results/preds_mistral-nemo-base-2407_slm.jsonl results/
-aws s3 cp s3://your-telco-llm-bucket/results/preds_qwen3-14b_slm.jsonl results/
-aws s3 cp s3://your-telco-llm-bucket/results/preds_gemma-3-12b-pt_slm.jsonl results/
+# Download and extract prediction tarballs from S3
+aws s3 cp s3://your-telco-llm-bucket/inference-output/mistral-nemo-base-2407/<job-name>/output/output.tar.gz /tmp/mistral-output.tar.gz
+aws s3 cp s3://your-telco-llm-bucket/inference-output/qwen3-14b/<job-name>/output/output.tar.gz /tmp/qwen3-output.tar.gz
+aws s3 cp s3://your-telco-llm-bucket/inference-output/gemma-3-12b-pt/<job-name>/output/output.tar.gz /tmp/gemma-output.tar.gz
 
+tar -xzf /tmp/mistral-output.tar.gz -C results/
+tar -xzf /tmp/qwen3-output.tar.gz -C results/
+tar -xzf /tmp/gemma-output.tar.gz -C results/
+
+# Verify all 992 predictions per model
+wc -l results/preds_*_slm.jsonl
+```
+
+```
+   992 results/preds_gemma-3-12b-pt_slm.jsonl
+   992 results/preds_mistral-nemo-base-2407_slm.jsonl
+   992 results/preds_qwen3-14b_slm.jsonl
+  2976 total
+```
+
+```bash
 # Score each model
-python3 src/evaluate.py --predictions results/preds_mistral-nemo-base-2407_slm.jsonl --model mistral --strategy slm
+python3 src/evaluate.py --predictions results/preds_mistral-nemo-base-2407_slm.jsonl --model mistral-nemo --strategy slm
 python3 src/evaluate.py --predictions results/preds_qwen3-14b_slm.jsonl --model qwen3 --strategy slm
 python3 src/evaluate.py --predictions results/preds_gemma-3-12b-pt_slm.jsonl --model gemma --strategy slm
 
 # Upload updated results
 aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 ```
+
+Scoring output:
+```
+[mistral-nemo/slm] F1=0.997 EM=0.997 n=992
+[qwen3/slm] F1=0.1724 EM=0.1724 n=992
+[gemma/slm] F1=0.119 EM=0.119 n=992
+```
+
+#### 6.5.5 Results — SLM Evaluation
+
+> **Fine-Tuned SLM Results**
+>
+> | Model | Strategy | F1 | Precision | Recall | Exact Match | n |
+> |-------|----------|---:|----------:|-------:|------------:|--:|
+> | Mistral-Nemo-Base-2407 | QLoRA 4-bit SLM | 0.9970 | 0.9970 | 0.9970 | 0.9970 | 992 |
+> | Qwen3-14B | QLoRA 4-bit SLM | 0.1724 | 0.1724 | 0.1724 | 0.1724 | 992 |
+> | Gemma 3 12B | QLoRA 4-bit SLM | 0.1190 | 0.1190 | 0.1190 | 0.1190 | 992 |
+
+> **Analysis:**
+>
+> - **Mistral-Nemo (99.7% F1)** — The clear winner. Outperforms every frontier model configuration including Claude five_shot_cot (99.4%). The model learned both the task and the output format (clean JSON arrays) perfectly. Only 3 out of 992 examples were misclassified.
+>
+> - **Qwen3-14B (17.2% F1)** — Poor results despite 86.8% token accuracy during training. The model generates verbose reasoning text instead of JSON arrays. The `extract_root_cause_from_text` filter catches `congestion` in 67 cases but misses most labels buried in free-form text. The model learned to reason about 3GPP logs but did not learn the structured output format. This is likely because Qwen3-14B's instruction-following tendencies (it's a base model with strong chat priors) override the LoRA adapter's formatting signal.
+>
+> - **Gemma 3 12B (11.9% F1)** — Worst results. The model produces completely empty outputs for all 992 examples, which default to `["normal"]` via the filter. The 11.9% F1 corresponds exactly to the proportion of `normal` examples in the test set (118/992 ≈ 11.9%). The adapter did not teach the model to generate any text after the `### Root Cause\n` prompt. This is consistent with `gemma-3-12b-pt` being a pure pre-trained model (the `-pt` suffix) — it lacks instruction-following capability, and the LoRA adapter was not sufficient to teach it structured generation from scratch.
+>
+> **Key takeaway:** Mistral-Nemo-Base-2407 with QLoRA 4-bit fine-tuning achieves 99.7% F1 — matching or exceeding frontier models at a fraction of the inference cost. The other two models would need either (a) more training data, (b) instruction-tuned base models instead of pure pre-trained ones, or (c) different prompt engineering to produce structured outputs.
 
 ---
 
