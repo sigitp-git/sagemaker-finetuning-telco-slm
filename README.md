@@ -785,45 +785,115 @@ aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 
 ### 5. Apply a Deterministic Post-Processing Filter
 
-**AWS Service: Amazon EC2 or SageMaker (same environment as training)**
+**Implementation: `src/filter.py`** (applied automatically by `src/evaluate.py`)
 
-Before scoring any model output, apply the same noise-removal filter to all responses — both fine-tuned SLMs and Bedrock frontier models. This strips sympathetic noise events (heartbeat timeouts, keepalives, cascading consequential failures) from the predicted root cause list.
+Before scoring any model output, the same noise-removal filter is applied to all responses — both fine-tuned SLMs and Bedrock frontier models. This strips sympathetic noise events (heartbeat timeouts, keepalives, cascading consequential failures) from the predicted root cause list and normalizes labels to the 8 valid failure types.
+
+> **No manual step required.** The filter is integrated into the scoring pipeline. When you run `python3 src/evaluate.py`, it imports `filter_sympathetic_noise` and `extract_root_cause_from_text` from `src/filter.py` and applies them to every prediction before computing metrics. The Step 4 scoring commands already applied this filter.
+
+The filter does three things:
+
+1. **Removes sympathetic noise codes** — strips 15 known noise labels (e.g., `HEARTBEAT_TIMEOUT`, `KEEPALIVE_FAIL`, `CASCADING_FAILURE`, `PFCP_HEARTBEAT_TIMEOUT`, `HARQ_NACK`) that appear in model outputs but are not root causes.
+2. **Normalizes to valid labels** — only keeps predictions that match one of the 8 valid root cause types. Any unrecognized label is dropped.
+3. **Defaults to `"normal"`** — if all predicted labels are filtered out, the prediction defaults to `"normal"` rather than producing an empty result.
 
 ```python
-SYMPATHETIC_CODES = {"HEARTBEAT_TIMEOUT", "KEEPALIVE_FAIL", "SECONDARY_ALARM", ...}
+# src/filter.py — full sympathetic noise code list
+SYMPATHETIC_CODES = {
+    "HEARTBEAT_TIMEOUT", "KEEPALIVE_FAIL", "KEEPALIVE_TIMEOUT",
+    "SECONDARY_ALARM", "CASCADING_FAILURE", "PFCP_HEARTBEAT_TIMEOUT",
+    "N2_HEARTBEAT_TIMEOUT", "N11_HEARTBEAT_TIMEOUT", "TIMER_EXPIRY",
+    "RETRANSMISSION", "DUPLICATE_NAS", "SPURIOUS_MEASUREMENT",
+    "BEAM_FAILURE_RECOVERY", "RLC_RETRANSMISSION", "HARQ_NACK",
+}
+
+VALID_ROOT_CAUSES = {
+    "core_network_failure", "authentication_failure", "normal",
+    "handover_failure", "congestion", "qos_violation",
+    "transport_jitter", "radio_failure",
+}
 
 def filter_sympathetic_noise(predicted_codes: list) -> list:
-    return [code for code in predicted_codes if code not in SYMPATHETIC_CODES]
+    """Remove sympathetic noise codes; keep only valid root cause labels."""
+    seen, filtered = set(), []
+    for code in predicted_codes:
+        norm = code.strip().lower()
+        if code.strip().upper() in SYMPATHETIC_CODES:
+            continue
+        if norm in VALID_ROOT_CAUSES and norm not in seen:
+            seen.add(norm)
+            filtered.append(norm)
+    return filtered if filtered else ["normal"]
 ```
 
-Apply this to every model's output before computing any metric. This ensures the comparison is fair and no model is penalized or rewarded for how it handles noise.
+The filter also includes `extract_root_cause_from_text()` which parses free-form model output (e.g., CoT reasoning text) into a structured label list by searching for JSON arrays or known label strings in the response text. This is used by `evaluate_bedrock.py` during inference and by `evaluate.py` during scoring.
 
 ---
 
 ### 6. Score with Consistent Metrics
 
-**AWS Service: Amazon EC2 or SageMaker**
+**Implementation: `src/evaluate.py`** (already executed in Step 4.4 for frontier models)
 
-Compute all metrics against the ground-truth test set using the filtered model outputs:
+The scoring script computes F1, Precision, Recall, and Exact Match against the ground-truth test set. It automatically applies the sympathetic noise filter (Step 5) before computing any metric.
 
-```python
-from sklearn.metrics import f1_score, precision_score, recall_score
+> **Frontier model scoring is already complete.** The `python3 src/evaluate.py` commands in Step 4.4 scored all 6 frontier model runs. Results are in `results/results.json`. This step documents the scoring mechanics and will be revisited when the fine-tuned SLM predictions are added.
 
-def score(predictions, ground_truth):
-    f1        = f1_score(ground_truth, predictions, average="micro")
-    precision = precision_score(ground_truth, predictions, average="micro")
-    recall    = recall_score(ground_truth, predictions, average="micro")
-    exact_match = sum(p == g for p, g in zip(predictions, ground_truth)) / len(ground_truth)
-    return {"f1": f1, "precision": precision, "recall": recall, "exact_match": exact_match}
-```
-
-Compute scores globally and per-scenario (across all 8 failure types) to produce the full ranking and scenario status matrix.
-
-Store results back to S3 for reproducibility:
+#### 6.1 How Scoring Works
 
 ```bash
-aws s3 cp results.json s3://your-telco-llm-bucket/results/results.json
+# General usage
+python3 src/evaluate.py \
+  --predictions results/preds_<model>_<strategy>.jsonl \
+  --test data/test.jsonl \
+  --model <model_name> \
+  --strategy <strategy_name>
 ```
+
+The script:
+1. Loads the test set (`data/test.jsonl`, 992 examples) and prediction file
+2. Auto-aligns if prediction count < test count (skips first N test examples used as few-shot)
+3. Extracts `root_cause` from each prediction (or parses free-form text via `extract_root_cause_from_text`)
+4. Applies `filter_sympathetic_noise` to both predictions and ground truth
+5. Takes the primary (first) label from each filtered list
+6. Computes micro-averaged F1, Precision, Recall, and Exact Match globally
+7. Computes per-class binary F1/Precision/Recall for each of the 8 failure types
+8. Appends the result to `results/results.json` (upserts by model+strategy key)
+
+#### 6.2 Metrics Definitions
+
+| Metric | Definition |
+|--------|-----------|
+| F1 (micro) | Harmonic mean of precision and recall, computed globally across all examples |
+| Precision (micro) | Fraction of predicted labels that match ground truth |
+| Recall (micro) | Fraction of ground truth labels that were correctly predicted |
+| Exact Match | Fraction of examples where predicted label exactly equals ground truth label |
+
+For single-label classification (one label per example), micro F1 = Precision = Recall = Exact Match. This is why all four metrics are identical in the frontier model results.
+
+Per-class metrics use binary one-vs-rest scoring: for each failure type, compute F1/Precision/Recall treating that type as positive and all others as negative.
+
+#### 6.3 Results Storage
+
+All results accumulate in `results/results.json` and are uploaded to S3:
+
+```bash
+aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
+```
+
+The file is a JSON array where each entry contains:
+```json
+{
+  "model": "claude",
+  "strategy": "five_shot_cot",
+  "metrics": {"f1": 0.9939, "precision": 0.9939, "recall": 0.9939, "exact_match": 0.9939, "n": 987},
+  "per_class": {
+    "authentication_failure": {"f1": 1.0, "precision": 1.0, "recall": 1.0, "n": 124},
+    ...
+  }
+}
+```
+
+This file will grow as fine-tuned SLM results are added in subsequent steps.
 
 ---
 
