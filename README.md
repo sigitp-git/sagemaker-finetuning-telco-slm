@@ -45,6 +45,8 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
      - [6.5.3 Submitted Inference Jobs](#653-submitted-inference-jobs)
      - [6.5.4 Score SLM Predictions](#654-score-slm-predictions)
      - [6.5.5 Results — SLM Evaluation](#655-results--slm-evaluation)
+     - [6.5.6 Root Cause Analysis — Why Qwen3 and Gemma Failed](#656-root-cause-analysis--why-qwen3-and-gemma-failed)
+     - [6.5.7 Improvement Options for Qwen3 and Gemma](#657-improvement-options-for-qwen3-and-gemma)
 7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
 8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
    - [8.1 SageMaker Real-Time Endpoint](#81-sagemaker-real-time-endpoint)
@@ -1228,6 +1230,45 @@ Scoring output:
 > - **Gemma 3 12B (11.9% F1)** — Worst results. The model produces completely empty outputs for all 992 examples, which default to `["normal"]` via the filter. The 11.9% F1 corresponds exactly to the proportion of `normal` examples in the test set (118/992 ≈ 11.9%). The adapter did not teach the model to generate any text after the `### Root Cause\n` prompt. This is consistent with `gemma-3-12b-pt` being a pure pre-trained model (the `-pt` suffix) — it lacks instruction-following capability, and the LoRA adapter was not sufficient to teach it structured generation from scratch.
 >
 > **Key takeaway:** Mistral-Nemo-Base-2407 with QLoRA 4-bit fine-tuning achieves 99.7% F1 — matching or exceeding frontier models at a fraction of the inference cost. The other two models would need either (a) more training data, (b) instruction-tuned base models instead of pure pre-trained ones, or (c) different prompt engineering to produce structured outputs.
+
+#### 6.5.6 Root Cause Analysis — Why Qwen3 and Gemma Failed
+
+The core problem is the same for both Qwen3 and Gemma — the training used `SFTTrainer` with the full prompt+completion as a single `text` field, meaning the model sees the entire sequence (including the answer) during training. But at inference time, the model only sees the prompt up to `### Root Cause\n` and has to generate the rest.
+
+The issue manifests differently per model:
+
+- **Qwen3-14B** — It's a base model with strong chat/reasoning priors. Instead of outputting a clean JSON array like `["congestion"]`, it generates verbose reasoning text. The LoRA adapter wasn't strong enough to override its tendency to explain rather than classify. It gets 67/992 correct (only `congestion` — the easiest label to extract from text).
+
+- **Gemma 3 12B (`-pt`)** — Pure pre-trained model with zero instruction-following capability. It produces empty outputs for all 992 examples. The adapter didn't teach it to generate structured text at all.
+
+#### 6.5.7 Improvement Options for Qwen3 and Gemma
+
+There are a few approaches to fix this, ranging from quick wins to more involved changes:
+
+**Option A — Improve the inference script (quick, no retraining)**
+
+- For Qwen3: The model IS reasoning correctly in many cases — it just outputs verbose text instead of JSON. We could improve `extract_root_cause_from_text` in `src/filter.py` to better parse the failure type labels from free-form text. This is a band-aid but could significantly boost Qwen3's score.
+- For Gemma: Won't help — empty outputs mean the model isn't generating anything.
+
+**Option B — Use instruction-tuned base models (retrain)**
+
+- Swap `Qwen/Qwen3-14B` → `Qwen/Qwen3-14B-Instruct` (or similar chat variant)
+- Swap `google/gemma-3-12b-pt` → `google/gemma-3-12b-it` (instruction-tuned)
+- These models already know how to follow instructions and produce structured output. The LoRA adapter just needs to teach them the domain-specific task, not the output format.
+- Downside: requires retraining and new inference jobs.
+
+**Option C — Fix the training data format (retrain)**
+
+- Currently `src/train.py` uses `format_example()` which puts the full prompt+answer as one `text` field. The model learns to predict the entire sequence, but there's no explicit signal about where the "answer" starts.
+- Switch to a chat/completion format where the model only trains on the completion tokens (the JSON array after `### Root Cause\n`), not the prompt. This is done via `SFTTrainer`'s `response_template` parameter or by using a chat template with `messages` format.
+- This teaches the model more precisely: "when you see `### Root Cause\n`, output a JSON array."
+
+**Option D — Increase `max_new_tokens` and add stop sequences (quick, no retraining)**
+
+- Current `max_new_tokens=64` might be too short for Qwen3's verbose output to eventually produce a label. But more importantly, we could add a stop sequence like `\n###` or `\n\n` to force the model to stop after the first line of output.
+- For Gemma: Won't help with empty outputs.
+
+> **Recommended approach:** Option A first (improve text extraction for a quick Qwen3 boost), then Option B (instruction-tuned base models) for a proper fix of both. Option C is good practice but Option B alone should solve the problem.
 
 ---
 
