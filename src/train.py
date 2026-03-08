@@ -19,7 +19,7 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from peft import LoraConfig, get_peft_model
-from trl import SFTTrainer, SFTConfig
+from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
 
 LORA_CONFIGS = {
     # model_id -> (r, lora_alpha, target_modules); Mistral-Nemo uses GQA — target all 4 proj layers
@@ -28,6 +28,12 @@ LORA_CONFIGS = {
     "google/gemma-3-12b-pt":            (16, 32, ["q_proj", "v_proj", "k_proj", "o_proj"]),
     "google/gemma-3-12b-it":            (16, 32, ["q_proj", "v_proj", "k_proj", "o_proj"]),
 }
+
+# Response template — SFTTrainer masks loss on all tokens before this string,
+# so the model only learns to generate the completion (JSON array) after it.
+# This is the key fix (Option C) for Qwen3 and Gemma which failed to produce
+# structured output when trained on the full prompt+completion as one text field.
+RESPONSE_TEMPLATE = "### Root Cause\n"
 
 
 def format_example(example):
@@ -144,11 +150,20 @@ def main():
         dataset_text_field="text",
     )
 
+    # Option C: Use DataCollatorForCompletionOnlyLM so the model only trains on
+    # the completion tokens (the JSON array after "### Root Cause\n"), not the prompt.
+    # This teaches the model precisely: "when you see ### Root Cause\n, output a JSON array."
+    collator = DataCollatorForCompletionOnlyLM(
+        response_template=RESPONSE_TEMPLATE,
+        tokenizer=tokenizer,
+    )
+
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=dataset,
         processing_class=tokenizer,
+        data_collator=collator,
     )
     trainer.train()
 

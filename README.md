@@ -49,6 +49,7 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
      - [6.5.7 Improvement Options for Qwen3 and Gemma](#657-improvement-options-for-qwen3-and-gemma)
      - [6.5.8 Option B Implementation — Retrain with Instruction-Tuned Models](#658-option-b-implementation--retrain-with-instruction-tuned-models)
      - [6.5.9 Results — Option B Retrain Evaluation](#659-results--option-b-retrain-evaluation)
+     - [6.5.10 Option C Implementation — Completion-Only Training](#6510-option-c-implementation--completion-only-training)
 7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
 8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
    - [8.1 SageMaker Real-Time Endpoint](#81-sagemaker-real-time-endpoint)
@@ -1259,7 +1260,7 @@ There are a few approaches to fix this, ranging from quick wins to more involved
 - These models already know how to follow instructions and produce structured output. The LoRA adapter just needs to teach them the domain-specific task, not the output format.
 - Downside: requires retraining and new inference jobs.
 
-**Option C — Fix the training data format (retrain)**
+**Option C — Fix the training data format (retrain)** ✅ CHOSEN
 
 - Currently `src/train.py` uses `format_example()` which puts the full prompt+answer as one `text` field. The model learns to predict the entire sequence, but there's no explicit signal about where the "answer" starts.
 - Switch to a chat/completion format where the model only trains on the completion tokens (the JSON array after `### Root Cause\n`), not the prompt. This is done via `SFTTrainer`'s `response_template` parameter or by using a chat template with `messages` format.
@@ -1380,6 +1381,90 @@ python3 src/evaluate.py --predictions results/preds_gemma-3-12b-it_slm.jsonl --t
 **Root cause confirmed:** The issue is **Option C — the training data format**. The current `SFTTrainer` setup trains on the full prompt+completion as a single `text` field. The model learns to predict the entire sequence (including the prompt), but at inference time it only sees the prompt up to `### Root Cause\n` and must generate the rest. There is no explicit signal about where the "answer" starts.
 
 **Next step:** Implement Option C — use `SFTTrainer`'s `response_template` parameter or switch to a chat/completion format so the model only trains on the completion tokens (the JSON array after `### Root Cause\n`). This teaches the model precisely: "when you see `### Root Cause\n`, output a JSON array."
+
+#### 6.5.10 Option C Implementation — Completion-Only Training
+
+**The problem with the original training format:**
+
+The original `SFTTrainer` setup in `src/train.py` used `format_example()` to create a single `text` field containing the full prompt + completion:
+
+```
+### Instruction
+Analyze the following 3GPP signaling log and identify the root cause.
+
+### Log
+<log content — typically 500-800 tokens>
+
+### Root Cause
+["congestion"]
+```
+
+The model trained on the entire sequence with equal loss weight on every token. This means ~95% of the training signal was spent learning to predict the instruction text and log content, with only ~5% dedicated to the actual answer (the JSON array). For models like Qwen3 and Gemma that don't have strong priors for this specific output format, the adapter couldn't learn to produce clean structured output.
+
+**The fix — `DataCollatorForCompletionOnlyLM`:**
+
+`trl` provides `DataCollatorForCompletionOnlyLM` which masks the loss on all tokens before a specified `response_template` string. Only the completion tokens (after the template) contribute to the training loss.
+
+Changes to `src/train.py`:
+
+```python
+# 1. Import the completion-only data collator
+from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
+
+# 2. Define the response template — the boundary between prompt and completion
+RESPONSE_TEMPLATE = "### Root Cause\n"
+
+# 3. Create the collator and pass it to SFTTrainer
+collator = DataCollatorForCompletionOnlyLM(
+    response_template=RESPONSE_TEMPLATE,
+    tokenizer=tokenizer,
+)
+
+trainer = SFTTrainer(
+    model=model,
+    args=training_args,
+    train_dataset=dataset,
+    processing_class=tokenizer,
+    data_collator=collator,  # <-- masks loss on prompt tokens
+)
+```
+
+**How it works:**
+
+1. The collator tokenizes `"### Root Cause\n"` and finds its token position in each training example
+2. All tokens before and including the template get `labels=-100` (PyTorch's ignore index for cross-entropy)
+3. Only the completion tokens (e.g., `["congestion"]`) contribute to the loss
+4. The model learns precisely: "when I see `### Root Cause\n`, output a JSON array"
+
+**Why this should fix Qwen3 and Gemma:**
+
+- Qwen3 was generating verbose reasoning text because the training signal was diluted across the entire sequence. With completion-only training, 100% of the gradient signal teaches the model to output clean JSON arrays.
+- Gemma was producing empty outputs because the adapter learned to predict the prompt structure (which it saw during training) but never learned the specific completion format. Focusing the loss on the completion forces the adapter to learn the JSON output pattern.
+
+**Submit retraining jobs (Option C):**
+
+```bash
+# Retrain Qwen3-14B with completion-only training
+python3 submit_training.py \
+  --role arn:aws:iam::ACCOUNT_ID:role/service-role/AmazonSageMaker-ExecutionRole \
+  --bucket your-telco-llm-bucket \
+  --model_id Qwen/Qwen3-14B \
+  --use_4bit
+
+# Retrain Gemma 3 12B IT with completion-only training
+python3 submit_training.py \
+  --role arn:aws:iam::ACCOUNT_ID:role/service-role/AmazonSageMaker-ExecutionRole \
+  --bucket your-telco-llm-bucket \
+  --model_id google/gemma-3-12b-it \
+  --use_4bit \
+  --hf_token $HF_TOKEN
+```
+
+**Poll training status:**
+
+```bash
+aws sagemaker describe-training-job --training-job-name <JOB_NAME> --query TrainingJobStatus --output text
+```
 
 ---
 

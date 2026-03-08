@@ -546,3 +546,95 @@ inputs = {k: v.to(model.device) for k, v in inputs.items()}
 ```
 
 New job submitted: `telco-rca-infer-mistral-nemo-base-24-2026-03-08-04-37-06-789`
+
+
+---
+
+## [2026-03-08] Option B failed — instruction-tuned base models did not improve Qwen3 or Gemma
+
+**Jobs:**
+- Training: `telco-rca-qwen3-14b-2026-03-08-06-00-46-936`, `telco-rca-gemma-3-12b-it-2026-03-08-06-00-59-550`
+- Inference: `telco-rca-infer-qwen3-14b-2026-03-08-14-38-24-193`, `telco-rca-infer-gemma-3-12b-it-2026-03-08-14-38-38-137`
+
+**Status:** All completed, but scores unchanged
+
+### Results
+
+| Model | Original F1 | Retrain F1 | Change |
+|-------|-------------|------------|--------|
+| Qwen3-14B | 17.24% | 17.14% | −0.10% |
+| Gemma 3 12B IT | 11.90% (`-pt`) | 11.90% (`-it`) | 0.00% |
+
+### Root Cause
+
+The problem was not the base model variant — it was the training data format. The current
+`SFTTrainer` setup trains on the full prompt+completion as a single `text` field with no
+explicit boundary between prompt and answer. The model learns to predict the entire sequence
+(including the instruction and log), but at inference time it only sees the prompt up to
+`### Root Cause\n` and must generate the rest.
+
+- Qwen3 generates verbose reasoning text instead of JSON arrays (only `congestion` extracted)
+- Gemma IT still produces empty outputs for all 992 examples (same as `-pt`)
+
+### Fix
+
+Implemented Option C — `DataCollatorForCompletionOnlyLM` with `response_template="### Root Cause\n"`.
+This masks the loss on all tokens before the response template, so the model only trains on
+the completion tokens (the JSON array). See next fix entry.
+
+
+---
+
+## [2026-03-08] Option C — completion-only training with DataCollatorForCompletionOnlyLM
+
+**Status:** Implemented in `src/train.py`, pending retraining
+
+### Problem
+
+The original `SFTTrainer` setup computed loss on the entire text sequence (prompt + completion).
+This meant the model spent most of its training signal learning to predict the instruction text
+and log content, with very little signal dedicated to the actual answer (the JSON array after
+`### Root Cause\n`). For models like Qwen3 and Gemma that don't have strong priors for this
+specific output format, the adapter couldn't learn to produce clean structured output.
+
+### Fix
+
+Three changes to `src/train.py`:
+
+1. Added `DataCollatorForCompletionOnlyLM` import from `trl`
+2. Defined `RESPONSE_TEMPLATE = "### Root Cause\n"` as the boundary marker
+3. Created a `DataCollatorForCompletionOnlyLM` instance and passed it as `data_collator` to `SFTTrainer`
+
+```python
+from trl import SFTTrainer, SFTConfig, DataCollatorForCompletionOnlyLM
+
+RESPONSE_TEMPLATE = "### Root Cause\n"
+
+# In main():
+collator = DataCollatorForCompletionOnlyLM(
+    response_template=RESPONSE_TEMPLATE,
+    tokenizer=tokenizer,
+)
+
+trainer = SFTTrainer(
+    model=model,
+    args=training_args,
+    train_dataset=dataset,
+    processing_class=tokenizer,
+    data_collator=collator,
+)
+```
+
+### How it works
+
+`DataCollatorForCompletionOnlyLM` tokenizes the `response_template` string and finds its
+position in each training example. It then sets `labels=-100` (ignore index) for all tokens
+before and including the template, so the cross-entropy loss is only computed on the completion
+tokens (the JSON array like `["congestion"]`). This teaches the model precisely: "when you see
+`### Root Cause\n`, output a JSON array."
+
+### Expected impact
+
+- Qwen3: Should stop generating verbose reasoning and produce clean JSON arrays
+- Gemma: Should start generating actual output instead of empty strings
+- Mistral-Nemo: Already at 99.7% F1, but may benefit from more focused training signal
