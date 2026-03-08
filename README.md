@@ -6,9 +6,48 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
 
 ---
 
+<a id="table-of-contents"></a>
+
+## Table of Contents
+
+1. [Provision Infrastructure](#1-provision-infrastructure)
+2. [Prepare Synthetic Training Data](#2-prepare-synthetic-training-data)
+3. [Fine-Tune the SLMs](#3-fine-tune-the-slms)
+4. [Evaluate Frontier Models via Bedrock](#4-evaluate-frontier-models-via-bedrock)
+   - [4.1 Prerequisites](#41-prerequisites)
+   - [4.2 Prompt Strategies](#42-prompt-strategies)
+   - [4.3 Run All 6 Evaluations](#43-run-all-6-evaluations)
+   - [4.4 Score All 6 Runs](#44-score-all-6-runs)
+   - [4.5 Results — Frontier Model Evaluation](#45-results--frontier-model-evaluation)
+   - [4.6 Per-Class Breakdown](#46-per-class-breakdown-best-variant-per-model)
+   - [4.7 Observations](#47-observations)
+5. [Apply a Deterministic Post-Processing Filter](#5-apply-a-deterministic-post-processing-filter)
+   - [5.1 How the Sympathetic Noise Codes Were Identified](#51-how-the-sympathetic-noise-codes-were-identified)
+6. [Score with Consistent Metrics](#6-score-with-consistent-metrics)
+   - [6.1 What Is the Ground-Truth Test Set?](#61-what-is-the-ground-truth-test-set)
+   - [6.2 How Scoring Works](#62-how-scoring-works)
+   - [6.3 Metrics Definitions](#63-metrics-definitions)
+   - [6.4 Results Storage](#64-results-storage)
+7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
+8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
+9. [Generate Reports](#9-generate-reports)
+   - [HTML Report](#html-report)
+   - [JavaScript PPT Presentation](#javascript-ppt-presentation)
+10. [Glossary: Concepts & Acronyms](#glossary-concepts--acronyms)
+    - [Models & Architecture](#models--architecture)
+    - [Fine-Tuning](#fine-tuning)
+    - [Prompting Strategies](#prompting-strategies)
+    - [Evaluation Metrics](#evaluation-metrics)
+    - [Telco & 3GPP Concepts](#telco--3gpp-concepts)
+    - [Infrastructure & Cost](#infrastructure--cost)
+    - [AWS Services](#aws-services)
+
+---
+
 ## How to Run This Benchmark
 
 ### 1. Provision Infrastructure
+[↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Services: Amazon SageMaker Training Jobs (recommended) or Amazon EC2**
 
@@ -90,6 +129,7 @@ pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu121
 ---
 
 ### 2. Prepare Synthetic Training Data
+[↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Services: Amazon Bedrock, Amazon S3**
 
@@ -130,6 +170,7 @@ aws s3 cp test.jsonl  s3://your-telco-llm-bucket/data/test.jsonl
 ---
 
 ### 3. Fine-Tune the SLMs
+[↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Service: Amazon SageMaker Training Jobs or Amazon EC2**
 
@@ -612,6 +653,7 @@ Training cost reference (based on SageMaker billable seconds and on-demand prici
 ---
 
 ### 4. Evaluate Frontier Models via Bedrock
+[↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Service: Amazon Bedrock**
 
@@ -784,6 +826,7 @@ aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 ---
 
 ### 5. Apply a Deterministic Post-Processing Filter
+[↑ Back to Table of Contents](#table-of-contents)
 
 **Implementation: `src/filter.py`** (applied automatically by `src/evaluate.py`)
 
@@ -847,6 +890,7 @@ The filter also includes `extract_root_cause_from_text()` which parses free-form
 ---
 
 ### 6. Score with Consistent Metrics
+[↑ Back to Table of Contents](#table-of-contents)
 
 **Implementation: `src/evaluate.py`** (already executed in Step 4.4 for frontier models)
 
@@ -960,6 +1004,7 @@ This file will grow as fine-tuned SLM results are added in subsequent steps.
 ---
 
 ### 7. Validate with Real Operator Data
+[↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Services: Amazon S3, AWS PrivateLink / VPC, Amazon SageMaker**
 
@@ -988,6 +1033,7 @@ estimator.fit({"train": "s3://your-telco-llm-bucket/data/train.jsonl"})
 ---
 
 ### 8. Deploy and Run the Ensemble
+[↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Services: Amazon SageMaker Endpoints, Amazon EC2, AWS Outposts**
 
@@ -1029,6 +1075,7 @@ Deploy the EC2 instance on an [AWS Outpost](https://aws.amazon.com/outposts/) ra
 ---
 
 ## 9. Generate Reports
+[↑ Back to Table of Contents](#table-of-contents)
 
 **Output: HTML report and JavaScript-based PPT presentation**
 
@@ -1132,6 +1179,7 @@ aws s3 cp reports/ s3://your-telco-llm-bucket/reports/ --recursive
 ---
 
 ## Glossary: Concepts & Acronyms
+[↑ Back to Table of Contents](#table-of-contents)
 
 ### Models & Architecture
 
