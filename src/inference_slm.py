@@ -76,7 +76,7 @@ def main():
     parser.add_argument("--test_file", default=None)
     parser.add_argument("--output_file", default=None)
     parser.add_argument("--output_filename", default="predictions.jsonl")
-    parser.add_argument("--max_new_tokens", type=int, default=64)
+    parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--batch_size", type=int, default=4)
     args = parser.parse_args()
 

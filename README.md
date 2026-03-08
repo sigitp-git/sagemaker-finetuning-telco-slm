@@ -51,6 +51,8 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
      - [6.5.9 Results — Option B Retrain Evaluation](#659-results--option-b-retrain-evaluation)
      - [6.5.10 Option C Implementation — Completion-Only Training](#6510-option-c-implementation--completion-only-training)
      - [6.5.11 Results — Option C Evaluation](#6511-results--option-c-evaluation)
+     - [6.5.12 Further Improvement Options (D–H)](#6512-further-improvement-options-dh)
+     - [6.5.13 Option D+E Implementation — Improved Filter + Longer Generation](#6513-option-de-implementation--improved-filter--longer-generation)
 7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
 8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
    - [8.1 SageMaker Real-Time Endpoint](#81-sagemaker-real-time-endpoint)
@@ -1574,6 +1576,141 @@ The completion-only training format change was theoretically sound — focusing 
 **Conclusion:**
 
 Mistral-Nemo-Base-2407 remains the clear winner among the fine-tuned SLMs at 99.7% F1, outperforming even the best frontier model configurations. Qwen3-14B and Gemma 3 12B IT require more fundamental changes (larger training sets, higher LoRA rank, full fine-tuning, or architecture-specific prompt engineering) to achieve competitive performance on this task. For production deployment of 3GPP RCA, Mistral-Nemo with QLoRA is the recommended approach.
+
+#### 6.5.12 Further Improvement Options (D–H)
+
+After Options B (instruction-tuned base models) and C (completion-only training) both failed to improve Qwen3 and Gemma, a deeper analysis of the model outputs revealed the following:
+
+**Qwen3-14B output analysis:**
+- The model *is reasoning correctly* — it identifies the right root causes in natural language (e.g., "authentication failure", "handover failure", "QoS flow installation failed", "congestion")
+- But it never outputs a clean JSON array like `["authentication_failure"]`
+- Instead it produces verbose prose that gets truncated at `max_new_tokens=64` before the label keyword appears
+- The `extract_root_cause_from_text` filter only matches exact canonical labels (e.g., `authentication_failure` with underscore), missing natural-language variants like "authentication failure" (with space)
+
+**Gemma 3 12B IT output analysis:**
+- Still produces empty outputs for all 992 examples
+- The model's generation pipeline appears stuck — the LoRA adapter may be interfering with Gemma's generation config
+
+**Available improvement options:**
+
+**Option D — Improve the text extraction filter (no retraining, quick win for Qwen3)** ✅ CHOSEN
+
+Add keyword synonyms and fuzzy regex matching to `extract_root_cause_from_text` in `src/filter.py`. Map natural-language phrases to canonical labels:
+- "authentication failure" / "auth reject" / "cause 21" → `authentication_failure`
+- "handover failure" / "insufficient radio resources" → `handover_failure`
+- "QoS flow failed" / "guaranteed bit rate not supported" → `qos_violation`
+- "reordering timeout" / "PDCP retransmission" / "transmission error" → `transport_jitter`
+- "radio link failure" / "RLF" / "beam failure" / "weak RSRP" → `radio_failure`
+- "overload" / "cause 22" → `congestion`
+- "N3 interface fail" / "PFCP session fail" / "UPF fail" → `core_network_failure`
+
+Won't help Gemma (empty outputs), but should significantly boost Qwen3 by catching the labels it's already producing in prose form.
+
+**Option E — Increase `max_new_tokens` from 64 to 256 (no retraining)** ✅ CHOSEN
+
+Many Qwen3 outputs are truncated mid-sentence at 64 tokens. The model may produce the label keyword later in its response if given more room. Combined with Option D's improved filter, this gives the extraction logic more text to work with.
+
+Change in `src/inference_slm.py`:
+```python
+# Before
+parser.add_argument("--max_new_tokens", type=int, default=64)
+# After
+parser.add_argument("--max_new_tokens", type=int, default=256)
+```
+
+**Option F — Increase LoRA rank and target more modules (retrain)**
+
+Current config: `r=16, lora_alpha=32`, targeting 4 attention projections (`q_proj`, `k_proj`, `v_proj`, `o_proj`). Increase to `r=64, lora_alpha=128` and add MLP layers (`gate_proj`, `up_proj`, `down_proj`) to give the adapter significantly more capacity. This is the standard approach when LoRA fine-tuning isn't learning enough — more trainable parameters means the adapter can override more of the base model's default behavior.
+
+**Option G — Increase training data and epochs (retrain)**
+
+1,300 examples × 3 epochs = 3,900 gradient steps. For a 14B model, this is quite light. Generate 5,000–10,000 examples via Bedrock and train for 5–10 epochs. More data gives the adapter more diverse examples of each failure type, reducing overfitting to the limited patterns in the current dataset.
+
+**Option H — Use chat template format for Qwen3 (retrain)**
+
+Qwen3 was designed for chat-style interactions with `<|im_start|>` / `<|im_end|>` tokens. Training with raw `### Instruction` format fights against the model's pretrained chat template. Formatting training data as proper chat messages could dramatically improve output quality by working *with* the model's architecture instead of against it.
+
+**Recommended approach:** D + E first (zero cost, no retraining, could unlock Qwen3 immediately), then H + F if further improvement is needed.
+
+#### 6.5.13 Option D+E Implementation — Improved Filter + Longer Generation
+
+**Option D — Enhanced `extract_root_cause_from_text` in `src/filter.py`:**
+
+The improved filter uses a three-stage extraction strategy:
+
+1. **JSON array extraction** — Look for `["label"]` patterns in the text (unchanged)
+2. **Exact canonical label match** — Look for `authentication_failure`, `handover_failure`, etc. with underscores (unchanged)
+3. **Fuzzy keyword synonym matching** — NEW: regex-based matching of natural-language phrases to canonical labels
+
+```python
+KEYWORD_SYNONYMS = [
+    # authentication_failure
+    (r"authentication\s+fail", "authentication_failure"),
+    (r"cause\s+(value\s+)?21", "authentication_failure"),
+    (r"incorrect.*res\*", "authentication_failure"),
+    # handover_failure
+    (r"handover\s+fail", "handover_failure"),
+    (r"insufficient\s+radio\s+resources", "handover_failure"),
+    # congestion
+    (r"congestion", "congestion"),
+    (r"overload", "congestion"),
+    (r"cause\s+(value\s+)?22", "congestion"),
+    # qos_violation
+    (r"qos\s+flow.*fail", "qos_violation"),
+    (r"guaranteed\s+bit\s*rate.*not.*supported", "qos_violation"),
+    # transport_jitter
+    (r"reordering\s+timeout", "transport_jitter"),
+    (r"pdcp.*retransmission", "transport_jitter"),
+    (r"transmission\s+error", "transport_jitter"),
+    # radio_failure
+    (r"radio\s+link\s+failure", "radio_failure"),
+    (r"beam\s+failure(?!\s+recovery)", "radio_failure"),
+    (r"weak\s+rsrp", "radio_failure"),
+    # core_network_failure
+    (r"n3\s+interface.*fail", "core_network_failure"),
+    (r"pfcp\s+session.*fail", "core_network_failure"),
+    (r"upf.*fail", "core_network_failure"),
+    # ... (full list in src/filter.py)
+]
+```
+
+Patterns are pre-compiled for performance and ordered from most specific to most generic within each category to avoid false positives.
+
+**Option E — `max_new_tokens` increased from 64 to 256 in `src/inference_slm.py`.**
+
+This gives Qwen3's verbose output more room to eventually mention the label keyword that the improved filter can catch.
+
+**Validation — no regression on Mistral-Nemo:**
+
+```bash
+python3 src/evaluate.py --predictions results/preds_mistral-nemo-base-2407_slm.jsonl \
+  --test data/test.jsonl --model mistral-nemo --strategy slm
+# [mistral-nemo/slm] F1=0.997 EM=0.997 n=992  ← unchanged
+```
+
+**Submit D+E inference jobs:**
+
+```bash
+# Qwen3-14B — D+E inference (max_new_tokens=256 + improved filter)
+python3 submit_inference.py \
+  --role arn:aws:iam::ACCOUNT_ID:role/service-role/AmazonSageMaker-ExecutionRole \
+  --bucket your-telco-llm-bucket \
+  --model_id Qwen/Qwen3-14B
+
+# Gemma 3 12B IT — D+E inference (max_new_tokens=256 + improved filter)
+python3 submit_inference.py \
+  --role arn:aws:iam::ACCOUNT_ID:role/service-role/AmazonSageMaker-ExecutionRole \
+  --bucket your-telco-llm-bucket \
+  --model_id google/gemma-3-12b-it \
+  --hf_token $HF_TOKEN
+```
+
+**D+E inference jobs:**
+
+| Model | Job Name | Instance | Status |
+|-------|----------|----------|--------|
+| Qwen3-14B | `telco-rca-infer-qwen3-14b-2026-03-08-20-44-08-467` | ml.g5.12xlarge | In Progress |
+| Gemma 3 12B IT | `telco-rca-infer-gemma-3-12b-it-2026-03-08-20-44-11-474` | ml.g5.2xlarge | In Progress |
 
 ---
 
