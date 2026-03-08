@@ -63,6 +63,12 @@ def main():
 
     test_data = load_jsonl(args.test)
     pred_data = load_jsonl(args.predictions)
+    # Align: if predictions < test examples, skip the first N test examples
+    # (they were used as few-shot examples and not evaluated)
+    offset = len(test_data) - len(pred_data)
+    if offset > 0:
+        print(f"  Aligning: skipping first {offset} test examples (used as few-shot)")
+        test_data = test_data[offset:]
     gts   = [ex["root_cause"] for ex in test_data]
     preds = [ex.get("root_cause") or extract_root_cause_from_text(ex.get("output", "")) for ex in pred_data]
 
