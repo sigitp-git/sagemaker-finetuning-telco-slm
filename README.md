@@ -11,9 +11,19 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
 ## Table of Contents
 
 1. [Provision Infrastructure](#1-provision-infrastructure)
+   - [1.1 SageMaker Training Jobs (Recommended)](#11-sagemaker-training-jobs-recommended)
+   - [1.2 EC2 Alternative](#12-ec2-alternative)
 2. [Prepare Synthetic Training Data](#2-prepare-synthetic-training-data)
-   - [S3 Bucket Structure](#s3-bucket-structure)
+   - [2.1 S3 Bucket Structure](#21-s3-bucket-structure)
 3. [Fine-Tune the SLMs](#3-fine-tune-the-slms)
+   - [3.1 Install Dependencies](#31-install-dependencies)
+   - [3.2 Submit Training Jobs](#32-submit-training-jobs)
+   - [3.3 Monitor Training Progress](#33-monitor-training-progress)
+   - [3.4 Training Results — Mistral-Nemo](#34-training-results--mistral-nemo)
+   - [3.5 Training Results — Qwen3-14B](#35-training-results--qwen3-14b)
+   - [3.6 Training Results — Gemma 3 12B](#36-training-results--gemma-3-12b)
+   - [3.7 Training Summary — All Models](#37-training-summary--all-models)
+   - [3.8 Save Adapters and Training Costs](#38-save-adapters-and-training-costs)
 4. [Evaluate Frontier Models via Bedrock](#4-evaluate-frontier-models-via-bedrock)
    - [4.1 Prerequisites](#41-prerequisites)
    - [4.2 Prompt Strategies](#42-prompt-strategies)
@@ -30,11 +40,18 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
    - [6.3 Metrics Definitions](#63-metrics-definitions)
    - [6.4 Results Storage](#64-results-storage)
    - [6.5 SLM Evaluation Options](#65-slm-evaluation-options)
+     - [6.5.1 Inference Script](#651-inference-script)
+     - [6.5.2 Submit Inference Jobs](#652-submit-inference-jobs)
+     - [6.5.3 Submitted Inference Jobs](#653-submitted-inference-jobs)
+     - [6.5.4 Score SLM Predictions](#654-score-slm-predictions)
 7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
 8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
+   - [8.1 SageMaker Real-Time Endpoint](#81-sagemaker-real-time-endpoint)
+   - [8.2 EC2 Self-Hosted](#82-ec2-self-hosted)
+   - [8.3 AWS Outposts / Edge](#83-aws-outposts--edge)
 9. [Generate Reports](#9-generate-reports)
-   - [HTML Report](#html-report)
-   - [JavaScript PPT Presentation](#javascript-ppt-presentation)
+   - [9.1 HTML Report](#91-html-report)
+   - [9.2 JavaScript PPT Presentation](#92-javascript-ppt-presentation)
 10. [Glossary: Concepts & Acronyms](#glossary-concepts--acronyms)
     - [Models & Architecture](#models--architecture)
     - [Fine-Tuning](#fine-tuning)
@@ -54,6 +71,8 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
 **AWS Services: Amazon SageMaker Training Jobs (recommended) or Amazon EC2**
 
 **Primary: Amazon SageMaker Training Jobs (recommended)**
+
+#### 1.1 SageMaker Training Jobs (Recommended)
 
 SageMaker Training Jobs is the managed option — no instance provisioning, no SSH, no manual teardown. You provide a training script and an S3 dataset path, specify the instance type, and SageMaker handles the rest: spins up the GPU instance, runs the job, saves artifacts to S3, and terminates the instance automatically.
 
@@ -108,6 +127,8 @@ estimator.fit({"train": "s3://your-telco-llm-bucket/data/train.jsonl"})
 ---
 
 **Alternative: Amazon EC2 (manual, lower cost for iterative experimentation)**
+
+#### 1.2 EC2 Alternative
 
 If you prefer direct GPU access for interactive development or debugging, launch a GPU-backed EC2 instance manually.
 
@@ -169,7 +190,7 @@ aws s3 cp train.jsonl s3://your-telco-llm-bucket/data/train.jsonl
 aws s3 cp test.jsonl  s3://your-telco-llm-bucket/data/test.jsonl
 ```
 
-#### S3 Bucket Structure
+#### 2.1 S3 Bucket Structure
 
 As you progress through the benchmark steps, the S3 bucket accumulates artifacts from data upload, training, inference, and evaluation. Here is the full layout and what each path is for:
 
@@ -230,6 +251,8 @@ s3://your-telco-llm-bucket/
 **AWS Service: Amazon SageMaker Training Jobs or Amazon EC2**
 
 Run LoRA/QLoRA fine-tuning using the [Hugging Face TRL](https://github.com/huggingface/trl) library and PEFT.
+
+#### 3.1 Install Dependencies
 
 Steps:
 1. Install dependencies:
@@ -293,6 +316,8 @@ hf auth login
 # Models: mistralai/Mistral-Nemo-Base-2407, Qwen/Qwen3-14B, google/gemma-3-12b-pt
 ```
 
+#### 3.2 Submit Training Jobs
+
 3. Submit the SageMaker Training Job using `submit_training.py` (repo root):
 
 ```bash
@@ -340,6 +365,8 @@ The script auto-selects the correct instance type and quantization mode per mode
 >
 > The pattern: all three 12B–14B models exceed the 24GB A10G VRAM limit when loaded in BF16 with training overhead. QLoRA 4-bit is required for all of them on `ml.g5.2xlarge`. Qwen3-14B additionally needs 4× GPUs because its larger architecture generates heavier activations and optimizer states during training.
 
+#### 3.3 Monitor Training Progress
+
 Monitor training progress:
 
 ```bash
@@ -370,6 +397,8 @@ while true; do
   sleep 60
 done
 ```
+
+#### 3.4 Training Results — Mistral-Nemo
 
 **Mistral-Nemo QLoRA 4-bit — Training Output (Completed)**
 
@@ -469,6 +498,8 @@ Step 325  | loss: 1.0355 | grad_norm: 2.1322 | lr: 0.000e+00 | epoch: 2.01
 >
 > The loss curve looks healthy — it converged nicely over 2 epochs. The adapter is ready for evaluation.
 
+#### 3.5 Training Results — Qwen3-14B
+
 **Qwen3-14B QLoRA 4-bit — Training Output (Completed)**
 
 ```bash
@@ -560,6 +591,8 @@ Step 325  | loss: 0.6052 | grad_norm: 0.00 | lr: 5.202e-09 | epoch: 2.01
 > ```
 >
 > The flat loss curve with high token accuracy (87%) indicates the model adapted quickly. The adapter is ready for evaluation.
+
+#### 3.6 Training Results — Gemma 3 12B
 
 **Gemma 3 12B QLoRA 4-bit — Training Output (Completed)**
 
@@ -657,6 +690,8 @@ Step 325  | loss: 5.1441 | grad_norm: 0.00 | lr: 5.202e-09 | epoch: 2.01
 >
 > The true test of Gemma's quality will be the evaluation metrics (F1, precision, recall) in Step 6. The adapter is ready for evaluation.
 
+#### 3.7 Training Summary — All Models
+
 **All Three Training Jobs — Completed**
 
 ![SageMaker Training Jobs - All Completed](images/sagemaker-training-jobs-completed.png)
@@ -680,6 +715,8 @@ Step 325  | loss: 5.1441 | grad_norm: 0.00 | lr: 5.202e-09 | epoch: 2.01
 > - **Token Acc** — Mean token-level accuracy (`mean_token_accuracy`), the percentage of next-token predictions the model got right during training. Mistral-Nemo shows "—" because it was trained on the older DLC image (`transformers 4.46.1`), which does not report this metric. Qwen3 and Gemma used the newer DLC (`transformers 4.56.2`), which includes `mean_token_accuracy` in the training logs.
 >
 > All three adapters are saved to S3 and ready for evaluation in Step 6. The loss scales differ across models due to architecture and tokenizer differences — the evaluation metrics (F1, precision, recall) in Step 6 will provide the true apples-to-apples comparison.
+
+#### 3.8 Save Adapters and Training Costs
 
 4. Save the LoRA adapter and upload to S3:
 
@@ -1068,7 +1105,7 @@ To evaluate the fine-tuned SLMs, we have a few options:
 
 We use **Option 1** (SageMaker Processing Job) for consistency with the training workflow.
 
-##### Inference Script
+#### 6.5.1 Inference Script
 
 The inference entry point (`src/inference_slm.py`) loads the base model in QLoRA 4-bit, merges the LoRA adapter from S3, and runs predictions on all 992 test examples. It uses the same prompt template as `train.py`:
 
@@ -1084,7 +1121,7 @@ Analyze the following 3GPP signaling log and identify the root cause.
 
 The model generates the root cause label, which is parsed and saved as JSONL matching the format expected by `src/evaluate.py`.
 
-##### Submit Inference Jobs
+#### 6.5.2 Submit Inference Jobs
 
 Use `submit_inference.py` to submit a SageMaker Training Job for each model:
 
@@ -1111,7 +1148,7 @@ python3 submit_inference.py \
   --hf_token $HF_TOKEN
 ```
 
-##### Submitted Inference Jobs
+#### 6.5.3 Submitted Inference Jobs
 
 | Model | Job Name | Instance |
 |-------|----------|----------|
@@ -1127,7 +1164,7 @@ aws sagemaker describe-training-job --training-job-name telco-rca-infer-qwen3-14
 aws sagemaker describe-training-job --training-job-name telco-rca-infer-gemma-3-12b-pt-2026-03-08-03-53-03-117 --query TrainingJobStatus --output text
 ```
 
-##### Score SLM Predictions
+#### 6.5.4 Score SLM Predictions
 
 After each inference job completes, score the predictions:
 
@@ -1187,6 +1224,8 @@ Based on the scenario matrix, deploy Ministral 3 14B and Gemma 3 12B as compleme
 - Ministral 3 14B → core network and transport scenarios
 - Gemma 3 12B → RAN/radio scenarios
 
+#### 8.1 SageMaker Real-Time Endpoint
+
 **Option A — SageMaker Real-Time Endpoint (managed, scalable):**
 
 ```python
@@ -1198,6 +1237,8 @@ model = HuggingFaceModel(model_data="s3://your-telco-llm-bucket/adapters/ministr
 predictor = model.deploy(instance_type="ml.g5.2xlarge", initial_instance_count=1)
 result = predictor.predict({"inputs": log_text})
 ```
+
+#### 8.2 EC2 Self-Hosted
 
 **Option B — EC2 self-hosted (lowest cost, edge-friendly):**
 
@@ -1214,19 +1255,21 @@ def infer(log_text):
     return model.generate(**inputs, max_new_tokens=256)
 ```
 
+#### 8.3 AWS Outposts / Edge
+
 **Option C — AWS Outposts / AWS Local Zones (for on-premise telco edge):**
 Deploy the EC2 instance on an [AWS Outpost](https://aws.amazon.com/outposts/) rack inside the operator's data center. The model runs on-premise with no data leaving the facility, meeting data residency requirements.
 
 ---
 
-## 9. Generate Reports
+### 9. Generate Reports
 [↑ Back to Table of Contents](#table-of-contents)
 
 **Output: HTML report and JavaScript-based PPT presentation**
 
 After scoring, generate visual reports from `results.json` for sharing and presentation.
 
-### HTML Report
+#### 9.1 HTML Report
 
 Use `src/report_html.py` to produce a self-contained HTML file with metrics tables and per-scenario charts:
 
@@ -1259,7 +1302,7 @@ th{{background:#f4f4f4}}</style></head>
     print(f"HTML report saved to {output_path}")
 ```
 
-### JavaScript PPT Presentation
+#### 9.2 JavaScript PPT Presentation
 
 Use `src/report_ppt.js` to generate a native `.pptx` file using [pptxgenjs](https://gitbrent.github.io/PptxGenJS/):
 
