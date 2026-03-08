@@ -512,3 +512,37 @@ Jobs submitted:
 - `telco-rca-infer-mistral-nemo-base-24-2026-03-08-03-49-49-993` (ml.g5.2xlarge)
 - `telco-rca-infer-qwen3-14b-2026-03-08-03-50-02-217` (ml.g5.12xlarge)
 - Gemma deferred — `ml.g5.2xlarge` quota is 1 instance, occupied by Mistral inference
+
+
+---
+
+## [2026-03-08] SLM inference — token_type_ids not accepted by Mistral
+
+**Job:** `telco-rca-infer-mistral-nemo-base-24-2026-03-08-03-49-49-993`  
+**Status:** Failed
+
+### Error
+
+```
+ValueError: The following `model_kwargs` are not used by the model: ['token_type_ids']
+```
+
+### Root Cause
+
+The tokenizer produces `token_type_ids` (a BERT-era feature for segment embeddings), but
+Mistral's `model.generate()` does not accept this kwarg. When passed via `**inputs`, the
+model raises a `ValueError` for unrecognized keyword arguments.
+
+### Fix
+
+Added `inputs.pop("token_type_ids", None)` after tokenization and before passing to
+`model.generate()` in `src/inference_slm.py`. This is safe for all three models — none
+of them use token type IDs.
+
+```python
+inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=960)
+inputs.pop("token_type_ids", None)  # not all models accept this (e.g. Mistral)
+inputs = {k: v.to(model.device) for k, v in inputs.items()}
+```
+
+New job submitted: `telco-rca-infer-mistral-nemo-base-24-2026-03-08-04-37-06-789`
