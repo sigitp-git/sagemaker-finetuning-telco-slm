@@ -590,18 +590,24 @@ Step 325  | loss: 5.1441 | grad_norm: 0.00 | lr: 5.202e-09 | epoch: 2.01
 ```bash
 # Adapter is saved automatically by train.py to {output_dir}/adapter/
 # SageMaker uploads it to s3://your-telco-llm-bucket/output/<model-slug>/ on job completion
-# Download locally if needed:
+# Download all three adapters locally:
 aws s3 cp s3://your-telco-llm-bucket/output/mistral-nemo-base-2407/adapter/ \
-  ./adapters/ministral/ --recursive
+  ./adapters/mistral-nemo/ --recursive
+
+aws s3 cp s3://your-telco-llm-bucket/output/qwen3-14b/adapter/ \
+  ./adapters/qwen3/ --recursive
+
+aws s3 cp s3://your-telco-llm-bucket/output/gemma-3-12b-pt/adapter/ \
+  ./adapters/gemma3/ --recursive
 ```
 
-Training cost reference:
+Training cost reference (based on SageMaker billable seconds and on-demand pricing, us-east-1):
 
-| Model | Method | GPU | Training Cost |
-|-------|--------|-----|---------------|
-| Ministral 3 14B | QLoRA 4-bit | 1× A10G (ml.g5.2xlarge) | ~$2.57 |
-| Qwen3-14B | QLoRA 4-bit | 4× A10G (ml.g5.12xlarge) | ~$9.68 |
-| Gemma 3 12B | QLoRA 4-bit | 1× A10G (ml.g5.2xlarge) | ~$3.44 |
+| Model | Method | GPU | Billable Time | Training Cost |
+|-------|--------|-----|---------------|---------------|
+| Mistral-Nemo-Base-2407 | QLoRA 4-bit | 1× A10G (ml.g5.2xlarge) | 3,105s (~52 min) | ~$1.31 |
+| Qwen3-14B | QLoRA 4-bit | 4× A10G (ml.g5.12xlarge) | 5,984s (~100 min) | ~$11.78 |
+| Gemma 3 12B | QLoRA 4-bit | 1× A10G (ml.g5.2xlarge) | 5,915s (~99 min) | ~$2.49 |
 
 ---
 
