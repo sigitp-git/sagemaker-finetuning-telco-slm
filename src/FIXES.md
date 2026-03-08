@@ -463,3 +463,52 @@ Also expanded LoRA target modules from `["q_proj", "v_proj"]` to all 4 attention
 ```
 
 New job submitted: (pending resubmit)
+
+
+---
+
+## [2026-03-08] SLM inference — Processing Job quota limit, switched to Training Job API
+
+**Job:** `telco-rca-infer-mistral-nemo-base-24-2026-03-08-03-48-11-835` (attempted)  
+**Status:** Failed before launch
+
+### Error
+
+```
+ResourceLimitExceeded: The account-level service limit 'ml.g5.2xlarge for processing job usage'
+is 0 Instances
+```
+
+### Root Cause
+
+SageMaker Processing Jobs and Training Jobs have separate service quotas. The account had
+`ml.g5.2xlarge` quota for Training Jobs but zero for Processing Jobs. The original
+`submit_inference.py` used `ScriptProcessor` (Processing Job API).
+
+Additionally, `ScriptProcessor.run()` does not support the `source_dir` parameter — only
+the `code` parameter for a single script file.
+
+### Fix
+
+Rewrote `submit_inference.py` to use the `Estimator` class (Training Job API) instead of
+`ScriptProcessor`. This reuses the existing Training Job GPU quota and the same DLC image.
+
+The inference script (`src/inference_slm.py`) was updated to:
+- Work as a SageMaker Training Job entry point using `SM_CHANNEL_*` environment variables
+- Auto-extract `output.tar.gz` tarballs from SageMaker training output (adapters are packaged as tarballs)
+- Write predictions to `SM_OUTPUT_DATA_DIR` for automatic S3 upload
+
+```python
+# Before (Processing Job)
+processor = ScriptProcessor(...)
+processor.run(code="src/inference_slm.py", source_dir="./src", ...)
+
+# After (Training Job)
+estimator = Estimator(entry_point="inference_slm.py", source_dir="./src", ...)
+estimator.fit({"test": "s3://...", "adapter": "s3://..."})
+```
+
+Jobs submitted:
+- `telco-rca-infer-mistral-nemo-base-24-2026-03-08-03-49-49-993` (ml.g5.2xlarge)
+- `telco-rca-infer-qwen3-14b-2026-03-08-03-50-02-217` (ml.g5.12xlarge)
+- Gemma deferred — `ml.g5.2xlarge` quota is 1 instance, occupied by Mistral inference

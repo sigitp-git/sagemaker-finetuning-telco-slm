@@ -1,5 +1,6 @@
 """
-Submit a SageMaker Processing Job for SLM inference.
+Submit a SageMaker Training Job for SLM inference (batch prediction).
+Uses Training Job API (not Processing) to leverage existing GPU quota.
 Loads base model + LoRA adapter, runs predictions on test set, uploads results to S3.
 
 Usage:
@@ -11,10 +12,10 @@ Usage:
     [--hf_token HF_TOKEN]
 """
 import argparse, time, boto3, sagemaker
-from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
+from sagemaker.estimator import Estimator
 
 # Same DLC as training — has transformers, peft, bitsandbytes, torch
-PROCESSING_IMAGE_URI = (
+INFERENCE_IMAGE_URI = (
     "763104351884.dkr.ecr.{region}.amazonaws.com/"
     "huggingface-pytorch-training:2.8.0-transformers4.56.2-gpu-py312-cu129-ubuntu22.04"
 )
@@ -39,12 +40,13 @@ def parse_args():
 
 
 def poll_job(sm_client, job_name, interval=60):
-    """Poll processing job status until terminal state."""
+    """Poll training job status until terminal state."""
     print(f"\nPolling job: {job_name}")
     while True:
-        resp = sm_client.describe_processing_job(ProcessingJobName=job_name)
-        status = resp["ProcessingJobStatus"]
-        print(f"  [{time.strftime('%H:%M:%S')}] Status: {status}")
+        resp = sm_client.describe_training_job(TrainingJobName=job_name)
+        status = resp["TrainingJobStatus"]
+        elapsed = resp.get("TrainingTimeInSeconds", 0)
+        print(f"  [{time.strftime('%H:%M:%S')}] Status: {status}  |  Elapsed: {elapsed}s")
         if status in ("Completed", "Failed", "Stopped"):
             if status == "Failed":
                 print(f"  Failure reason: {resp.get('FailureReason', 'N/A')}")
@@ -60,77 +62,66 @@ def main():
 
     # Derive model slug for naming
     slug = args.model_id.split("/")[-1].lower().replace(".", "-").replace("_", "-")
-    job_name = f"telco-rca-infer-{slug[:20]}-{int(time.time())}"
     output_filename = f"preds_{slug}_slm.jsonl"
 
     boto_session = boto3.Session(region_name=args.region)
     sm_session = sagemaker.Session(boto_session=boto_session)
     sm_client = boto_session.client("sagemaker")
 
-    # The adapter is stored under the training job output path
-    adapter_s3_uri = f"s3://{args.bucket}/output/{slug}/"
+    # Find the latest training job output for this model
+    s3 = boto_session.client("s3")
+    prefix = f"output/{slug}/"
+    resp = s3.list_objects_v2(Bucket=args.bucket, Prefix=prefix, Delimiter="/")
+    job_prefixes = sorted([p["Prefix"] for p in resp.get("CommonPrefixes", [])])
+    if not job_prefixes:
+        print(f"ERROR: No training output found at s3://{args.bucket}/{prefix}")
+        return
+    latest_job_prefix = job_prefixes[-1]
+    adapter_s3_uri = f"s3://{args.bucket}/{latest_job_prefix}output/"
+    print(f"Using adapter from: {adapter_s3_uri}")
 
     env = {}
     if args.hf_token:
         env["HF_TOKEN"] = args.hf_token
 
-    processor = ScriptProcessor(
-        role=args.role,
-        image_uri=PROCESSING_IMAGE_URI.format(region=args.region),
+    estimator = Estimator(
+        entry_point="inference_slm.py",
+        source_dir="./src",
         instance_type=instance_type,
         instance_count=1,
-        command=["python3"],
+        role=args.role,
         sagemaker_session=sm_session,
-        env=env,
+        image_uri=INFERENCE_IMAGE_URI.format(region=args.region),
+        hyperparameters={
+            "model_id": args.model_id,
+            "output_filename": output_filename,
+        },
+        environment=env,
+        output_path=f"s3://{args.bucket}/inference-output/{slug}/",
         base_job_name=f"telco-rca-infer-{slug[:20]}",
+        max_run=7200,  # 2 hour max
     )
 
-    processor.run(
-        code="src/inference_slm.py",
-        source_dir="./src",
-        inputs=[
-            ProcessingInput(
-                source=f"s3://{args.bucket}/data/test.jsonl",
-                destination="/opt/ml/processing/input/test",
-                input_name="test",
-            ),
-            ProcessingInput(
-                source=adapter_s3_uri,
-                destination="/opt/ml/processing/input/adapter",
-                input_name="adapter",
-            ),
-        ],
-        outputs=[
-            ProcessingOutput(
-                source="/opt/ml/processing/output",
-                destination=f"s3://{args.bucket}/results/",
-                output_name="predictions",
-            ),
-        ],
-        arguments=[
-            "--model_id", args.model_id,
-            "--adapter_dir", "/opt/ml/processing/input/adapter/adapter",
-            "--test_file", "/opt/ml/processing/input/test/test.jsonl",
-            "--output_file", f"/opt/ml/processing/output/{output_filename}",
-        ],
+    estimator.fit(
+        {
+            "test": f"s3://{args.bucket}/data/test.jsonl",
+            "adapter": adapter_s3_uri,
+        },
         wait=False,
     )
 
-    actual_job_name = processor.latest_job.name
-    console_url = (
-        f"https://console.aws.amazon.com/sagemaker/home?region={args.region}"
-        f"#/processing-jobs/{actual_job_name}"
-    )
-    print(f"\nJob submitted : {actual_job_name}")
+    job_name = estimator.latest_training_job.name
+    console_url = f"https://console.aws.amazon.com/sagemaker/home?region={args.region}#/jobs/{job_name}"
+    print(f"\nJob submitted : {job_name}")
     print(f"Instance      : {instance_type}")
     print(f"Model         : {args.model_id}")
     print(f"Adapter       : {adapter_s3_uri}")
-    print(f"Output        : s3://{args.bucket}/results/{output_filename}")
+    print(f"Output        : s3://{args.bucket}/inference-output/{slug}/")
     print(f"Console       : {console_url}")
-    print(f"\nPoll status   : aws sagemaker describe-processing-job --processing-job-name {actual_job_name} --query ProcessingJobStatus --output text")
+    print(f"\nPoll status   : aws sagemaker describe-training-job --training-job-name {job_name} --query TrainingJobStatus --output text")
 
     if args.wait:
-        final = poll_job(sm_client, actual_job_name)
+        final = poll_job(sm_client, job_name)
         print(f"\nFinal status: {final}")
 
 

@@ -31,21 +31,64 @@ def load_jsonl(path):
 
 def parse_root_cause(text):
     """Extract root cause from generated text after '### Root Cause' marker."""
-    # Add filter.py's directory to path for import
+    # Add filter.py's directory to path for import — works both locally (src/)
+    # and on SageMaker Processing (/opt/ml/processing/input/code/)
     sys.path.insert(0, os.path.dirname(__file__))
+    sys.path.insert(0, "/opt/ml/processing/input/code")
     from filter import extract_root_cause_from_text
     return extract_root_cause_from_text(text)
+
+
+def extract_adapter(adapter_input_dir):
+    """Find and extract output.tar.gz from SageMaker training output, return adapter path."""
+    import tarfile, glob
+    # Look for output.tar.gz anywhere under the input directory
+    tarballs = glob.glob(os.path.join(adapter_input_dir, "**", "output.tar.gz"), recursive=True)
+    if not tarballs:
+        # Maybe the adapter files are already extracted (local run)
+        if os.path.exists(os.path.join(adapter_input_dir, "adapter_config.json")):
+            return adapter_input_dir
+        if os.path.exists(os.path.join(adapter_input_dir, "adapter", "adapter_config.json")):
+            return os.path.join(adapter_input_dir, "adapter")
+        raise FileNotFoundError(f"No output.tar.gz or adapter_config.json found in {adapter_input_dir}")
+
+    tarball = tarballs[0]
+    extract_dir = os.path.join(adapter_input_dir, "_extracted")
+    print(f"Extracting {tarball} to {extract_dir}")
+    os.makedirs(extract_dir, exist_ok=True)
+    with tarfile.open(tarball, "r:gz") as tf:
+        tf.extractall(extract_dir)
+
+    # The tarball contains adapter/ directory with the LoRA weights
+    adapter_path = os.path.join(extract_dir, "adapter")
+    if os.path.exists(adapter_path):
+        return adapter_path
+    # Fallback: check for adapter_config.json directly in extract dir
+    if os.path.exists(os.path.join(extract_dir, "adapter_config.json")):
+        return extract_dir
+    raise FileNotFoundError(f"No adapter/ directory found in extracted tarball: {os.listdir(extract_dir)}")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_id", required=True)
-    parser.add_argument("--adapter_dir", required=True, help="Path to LoRA adapter directory")
-    parser.add_argument("--test_file", default="data/test.jsonl")
-    parser.add_argument("--output_file", required=True)
+    parser.add_argument("--adapter_dir", default=os.environ.get("SM_CHANNEL_ADAPTER", "./adapter"))
+    parser.add_argument("--test_file", default=None)
+    parser.add_argument("--output_file", default=None)
+    parser.add_argument("--output_filename", default="predictions.jsonl")
     parser.add_argument("--max_new_tokens", type=int, default=64)
     parser.add_argument("--batch_size", type=int, default=4)
     args = parser.parse_args()
+
+    # Resolve paths for SageMaker Training Job environment
+    if args.test_file is None:
+        test_channel = os.environ.get("SM_CHANNEL_TEST", "./data")
+        args.test_file = os.path.join(test_channel, "test.jsonl") \
+            if os.path.isdir(test_channel) else test_channel
+    if args.output_file is None:
+        output_dir = os.environ.get("SM_OUTPUT_DATA_DIR", "./output")
+        os.makedirs(output_dir, exist_ok=True)
+        args.output_file = os.path.join(output_dir, args.output_filename)
 
     # Authenticate with Hugging Face for gated models
     hf_token = os.environ.get("HF_TOKEN")
@@ -55,8 +98,13 @@ def main():
         print("Authenticated with Hugging Face (gated model access)")
 
     print(f"Model: {args.model_id}")
-    print(f"Adapter: {args.adapter_dir}")
+    print(f"Adapter input: {args.adapter_dir}")
     print(f"Test file: {args.test_file}")
+
+    # Extract adapter from tarball if needed
+    adapter_dir = extract_adapter(args.adapter_dir)
+    print(f"Adapter resolved to: {adapter_dir}")
+    print(f"Adapter contents: {os.listdir(adapter_dir)}")
 
     # Load base model in QLoRA 4-bit
     bnb_config = BitsAndBytesConfig(
@@ -78,8 +126,8 @@ def main():
     tokenizer.padding_side = "left"  # left-pad for batch generation
 
     # Merge LoRA adapter
-    print(f"Loading adapter from {args.adapter_dir}")
-    model = PeftModel.from_pretrained(model, args.adapter_dir)
+    print(f"Loading adapter from {adapter_dir}")
+    model = PeftModel.from_pretrained(model, adapter_dir)
     model.eval()
 
     # Load test data
