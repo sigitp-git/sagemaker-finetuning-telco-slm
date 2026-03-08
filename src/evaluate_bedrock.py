@@ -1,7 +1,9 @@
 """
 Frontier model evaluation via Amazon Bedrock.
-Runs Claude and Nova Pro against the test set with three prompt strategies:
+Runs Claude Opus 4.6 and Nova Pro against the test set with three prompt strategies:
 zero-shot, 5-shot, and 5-shot + CoT.
+
+Uses the Bedrock Converse API for uniform request/response format across models.
 
 Usage:
   python src/evaluate_bedrock.py --model nova --strategy zero_shot
@@ -21,7 +23,7 @@ from filter import extract_root_cause_from_text
 REGION = "us-east-1"
 
 MODEL_IDS = {
-    "claude": "anthropic.claude-opus-4-5-20251101-v1:0",
+    "claude": "us.anthropic.claude-opus-4-6-v1",
     "nova":   "amazon.nova-pro-v1:0",
 }
 
@@ -49,18 +51,14 @@ def build_messages(log_text: str, few_shot: list, use_cot: bool) -> list:
 
 
 def invoke_model(bedrock, model_id: str, messages: list) -> str:
-    body = {
-        "system": [{"text": SYSTEM_PROMPT}],
-        "messages": messages,
-        "inferenceConfig": {"maxTokens": 512, "temperature": 0.0},
-    }
-    resp = bedrock.invoke_model(
+    """Call Bedrock Converse API — works uniformly for Claude and Nova."""
+    resp = bedrock.converse(
         modelId=model_id,
-        body=json.dumps(body),
-        contentType="application/json",
-        accept="application/json",
+        system=[{"text": SYSTEM_PROMPT}],
+        messages=messages,
+        inferenceConfig={"maxTokens": 512, "temperature": 0.0},
     )
-    return json.loads(resp["body"].read())["output"]["message"]["content"][0]["text"]
+    return resp["output"]["message"]["content"][0]["text"]
 
 
 def evaluate(test_data: list, model_key: str, strategy: str, out_path: str):
@@ -104,7 +102,7 @@ def main():
 
     test_data = load_jsonl(args.test)
     out_path = os.path.join(args.out_dir, f"preds_{args.model}_{args.strategy}.jsonl")
-    print(f"Evaluating {args.model} / {args.strategy} on {len(test_data)} examples...")
+    print(f"Evaluating {args.model} ({MODEL_IDS[args.model]}) / {args.strategy} on {len(test_data)} examples...")
     evaluate(test_data, args.model, args.strategy, out_path)
     print(f"Next: python src/evaluate.py --predictions {out_path} --model {args.model} --strategy {args.strategy}")
 
