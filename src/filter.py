@@ -103,12 +103,23 @@ def extract_root_cause_from_text(text: str) -> list:
     """Parse root cause labels from free-form model output text.
 
     Strategy (in priority order):
-    1. Look for a JSON array in the text (e.g. '["congestion"]')
-    2. Look for exact canonical label strings (e.g. 'authentication_failure')
-    3. Fuzzy keyword synonym matching against natural-language phrases
+    1. Strip <think>...</think> blocks (Qwen3 reasoning mode)
+    2. Look for a JSON array in the text (e.g. '["congestion"]')
+    3. Look for exact canonical label strings (e.g. 'authentication_failure')
+    4. Fuzzy keyword synonym matching against natural-language phrases
     """
+    # 0. Strip <think>...</think> blocks — Qwen3's reasoning mode produces
+    #    verbose text that mentions all failure types, causing false positives.
+    #    Only extract from the actual answer after </think>.
+    clean_text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+    # If </think> is missing (truncated), strip everything after <think>
+    if '<think>' in clean_text:
+        clean_text = re.sub(r'<think>.*', '', clean_text, flags=re.DOTALL).strip()
+    # Use cleaned text for extraction, fall back to original if empty
+    if not clean_text:
+        clean_text = text
     # 1. Try JSON array extraction
-    match = re.search(r'\[.*?\]', text, re.DOTALL)
+    match = re.search(r'\[.*?\]', clean_text, re.DOTALL)
     if match:
         try:
             parsed = json.loads(match.group())
@@ -120,7 +131,7 @@ def extract_root_cause_from_text(text: str) -> list:
             pass
 
     # 2. Try exact canonical label match
-    text_lower = text.lower()
+    text_lower = clean_text.lower()
     found = [label for label in VALID_ROOT_CAUSES if label in text_lower]
     if found:
         result = filter_sympathetic_noise(found)
@@ -132,7 +143,7 @@ def extract_root_cause_from_text(text: str) -> list:
     seen = set()
     matched = []
     for pattern, label in _COMPILED_SYNONYMS:
-        if label not in seen and pattern.search(text):
+        if label not in seen and pattern.search(clean_text):
             seen.add(label)
             matched.append(label)
     # Remove "normal" if we found a real failure

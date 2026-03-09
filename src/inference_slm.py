@@ -35,7 +35,7 @@ SYSTEM_PROMPT = (
 )
 
 QWEN3_PROMPT_TEMPLATE = (
-    "<|im_start|>system\n" + SYSTEM_PROMPT + "<|im_end|>\n"
+    "<|im_start|>system\n" + SYSTEM_PROMPT + "\n/no_think<|im_end|>\n"
     "<|im_start|>user\n{log}<|im_end|>\n"
     "<|im_start|>assistant\n"
 )
@@ -155,6 +155,11 @@ def main():
     use_chat_template = args.model_id in CHAT_TEMPLATE_MODELS
     if use_chat_template:
         print(f"Using Qwen3 chat template for {args.model_id}")
+        # Disable Qwen3's thinking mode — it generates <think>...</think> blocks
+        # that eat up the token budget and contain all label keywords (false positives).
+        # With thinking disabled, the model outputs the JSON array directly.
+        if hasattr(model, 'generation_config'):
+            model.generation_config.do_sample = False
         # Build stop token IDs for <|im_end|> so the model stops after the JSON answer
         stop_token_ids = tokenizer.encode("<|im_end|>", add_special_tokens=False)
         from transformers import StoppingCriteria, StoppingCriteriaList

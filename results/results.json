@@ -1096,5 +1096,127 @@
         "n": 125
       }
     }
+  },
+  {
+    "model": "qwen3-optionH",
+    "strategy": "slm",
+    "metrics": {
+      "f1": 0.3548,
+      "precision": 0.3548,
+      "recall": 0.3548,
+      "exact_match": 0.3548,
+      "n": 992
+    },
+    "per_class": {
+      "core_network_failure": {
+        "f1": 0.355,
+        "precision": 0.6818,
+        "recall": 0.24,
+        "n": 125
+      },
+      "authentication_failure": {
+        "f1": 0.2993,
+        "precision": 0.18,
+        "recall": 0.8871,
+        "n": 124
+      },
+      "normal": {
+        "f1": 0.2092,
+        "precision": 0.2066,
+        "recall": 0.2119,
+        "n": 118
+      },
+      "handover_failure": {
+        "f1": 0.4432,
+        "precision": 0.7647,
+        "recall": 0.312,
+        "n": 125
+      },
+      "congestion": {
+        "f1": 0.7103,
+        "precision": 0.8539,
+        "recall": 0.608,
+        "n": 125
+      },
+      "qos_violation": {
+        "f1": 0.2394,
+        "precision": 1.0,
+        "recall": 0.136,
+        "n": 125
+      },
+      "transport_jitter": {
+        "f1": 0.3333,
+        "precision": 1.0,
+        "recall": 0.2,
+        "n": 125
+      },
+      "radio_failure": {
+        "f1": 0.3774,
+        "precision": 0.8824,
+        "recall": 0.24,
+        "n": 125
+      }
+    }
+  },
+  {
+    "model": "qwen3-optionH-thinkstrip",
+    "strategy": "slm",
+    "metrics": {
+      "f1": 0.3548,
+      "precision": 0.3548,
+      "recall": 0.3548,
+      "exact_match": 0.3548,
+      "n": 992
+    },
+    "per_class": {
+      "core_network_failure": {
+        "f1": 0.355,
+        "precision": 0.6818,
+        "recall": 0.24,
+        "n": 125
+      },
+      "authentication_failure": {
+        "f1": 0.2993,
+        "precision": 0.18,
+        "recall": 0.8871,
+        "n": 124
+      },
+      "normal": {
+        "f1": 0.2092,
+        "precision": 0.2066,
+        "recall": 0.2119,
+        "n": 118
+      },
+      "handover_failure": {
+        "f1": 0.4432,
+        "precision": 0.7647,
+        "recall": 0.312,
+        "n": 125
+      },
+      "congestion": {
+        "f1": 0.7103,
+        "precision": 0.8539,
+        "recall": 0.608,
+        "n": 125
+      },
+      "qos_violation": {
+        "f1": 0.2394,
+        "precision": 1.0,
+        "recall": 0.136,
+        "n": 125
+      },
+      "transport_jitter": {
+        "f1": 0.3333,
+        "precision": 1.0,
+        "recall": 0.2,
+        "n": 125
+      },
+      "radio_failure": {
+        "f1": 0.3774,
+        "precision": 0.8824,
+        "recall": 0.24,
+        "n": 125
+      }
+    }
   }
 ]
