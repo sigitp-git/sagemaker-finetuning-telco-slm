@@ -23,6 +23,23 @@ PROMPT_TEMPLATE = (
     "### Root Cause\n"
 )
 
+# Qwen3 uses its native chat template for much better structured output
+CHAT_TEMPLATE_MODELS = {"Qwen/Qwen3-14B"}
+
+SYSTEM_PROMPT = (
+    "You are a 3GPP root cause analysis assistant. "
+    "Given a signaling log, respond with ONLY a JSON array of root cause labels. "
+    "Valid labels: core_network_failure, authentication_failure, normal, "
+    "handover_failure, congestion, qos_violation, transport_jitter, radio_failure. "
+    "Example: [\"congestion\"]"
+)
+
+QWEN3_PROMPT_TEMPLATE = (
+    "<|im_start|>system\n" + SYSTEM_PROMPT + "<|im_end|>\n"
+    "<|im_start|>user\n{log}<|im_end|>\n"
+    "<|im_start|>assistant\n"
+)
+
 
 def load_jsonl(path):
     with open(path) as f:
@@ -135,24 +152,51 @@ def main():
     print(f"Loaded {len(test_data)} test examples")
 
     # Run inference in batches
+    use_chat_template = args.model_id in CHAT_TEMPLATE_MODELS
+    if use_chat_template:
+        print(f"Using Qwen3 chat template for {args.model_id}")
+        # Build stop token IDs for <|im_end|> so the model stops after the JSON answer
+        stop_token_ids = tokenizer.encode("<|im_end|>", add_special_tokens=False)
+        from transformers import StoppingCriteria, StoppingCriteriaList
+
+        class StopOnImEnd(StoppingCriteria):
+            def __call__(self, input_ids, scores, **kwargs):
+                # Check if the last generated tokens match <|im_end|>
+                if input_ids.shape[1] >= len(stop_token_ids):
+                    for row in input_ids:
+                        if row[-len(stop_token_ids):].tolist() == stop_token_ids:
+                            return True
+                return False
+
+        stopping_criteria = StoppingCriteriaList([StopOnImEnd()])
+    else:
+        stopping_criteria = None
+
     results = []
     for i in range(0, len(test_data), args.batch_size):
         batch = test_data[i : i + args.batch_size]
-        prompts = [PROMPT_TEMPLATE.format(log=ex["log"]) for ex in batch]
+        if use_chat_template:
+            prompts = [QWEN3_PROMPT_TEMPLATE.format(log=ex["log"]) for ex in batch]
+        else:
+            prompts = [PROMPT_TEMPLATE.format(log=ex["log"]) for ex in batch]
 
         inputs = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=960)
         # Remove token_type_ids — not all models accept them (e.g. Mistral)
         inputs.pop("token_type_ids", None)
         inputs = {k: v.to(model.device) for k, v in inputs.items()}
 
+        generate_kwargs = dict(
+            **inputs,
+            max_new_tokens=args.max_new_tokens,
+            do_sample=False,
+            temperature=1.0,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+        if stopping_criteria:
+            generate_kwargs["stopping_criteria"] = stopping_criteria
+
         with torch.no_grad():
-            outputs = model.generate(
-                **inputs,
-                max_new_tokens=args.max_new_tokens,
-                do_sample=False,
-                temperature=1.0,
-                pad_token_id=tokenizer.pad_token_id,
-            )
+            outputs = model.generate(**generate_kwargs)
 
         for j, output in enumerate(outputs):
             # Decode only the generated tokens (skip the prompt)

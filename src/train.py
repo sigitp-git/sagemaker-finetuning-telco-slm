@@ -29,30 +29,51 @@ LORA_CONFIGS = {
     "google/gemma-3-12b-it":            (16, 32, ["q_proj", "v_proj", "k_proj", "o_proj"]),
 }
 
-# Response template — the boundary between prompt and completion.
-# With prompt-completion dataset format, SFTTrainer automatically computes loss
-# only on the completion tokens (Option C fix for Qwen3 and Gemma).
-RESPONSE_TEMPLATE = "### Root Cause\n"
+# Models that use a chat template for training and inference.
+# These models were pretrained with special tokens (<|im_start|>, <|im_end|>)
+# and perform significantly better when fine-tuned in their native format
+# rather than raw ### Instruction / ### Log / ### Root Cause format.
+CHAT_TEMPLATE_MODELS = {"Qwen/Qwen3-14B"}
+
+SYSTEM_PROMPT = (
+    "You are a 3GPP root cause analysis assistant. "
+    "Given a signaling log, respond with ONLY a JSON array of root cause labels. "
+    "Valid labels: core_network_failure, authentication_failure, normal, "
+    "handover_failure, congestion, qos_violation, transport_jitter, radio_failure. "
+    "Example: [\"congestion\"]"
+)
 
 
-def format_example(example):
+def format_example(example, model_id=""):
     """Convert JSONL example to prompt-completion pair.
 
-    Returns separate 'prompt' and 'completion' fields so SFTTrainer
-    computes loss only on the completion tokens (the JSON array).
-    This is the Option C fix — the model learns precisely:
-    'when I see ### Root Cause\\n, output a JSON array.'
+    For chat-template models (Qwen3): uses <|im_start|>/<|im_end|> format
+    so the model stays in 'answer mode' and produces clean JSON output.
+
+    For other models: uses raw ### Instruction format with prompt-completion
+    split so SFTTrainer computes loss only on the completion tokens.
     """
     log = example["log"]
     label = json.dumps(example["root_cause"])
-    return {
-        "prompt": (
-            "### Instruction\nAnalyze the following 3GPP signaling log and identify the root cause.\n\n"
-            f"### Log\n{log}\n\n"
-            f"### Root Cause\n"
-        ),
-        "completion": label,
-    }
+
+    if model_id in CHAT_TEMPLATE_MODELS:
+        # Qwen3 native chat format — the model was pretrained with these tokens
+        prompt = (
+            f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
+            f"<|im_start|>user\n{log}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+        return {"prompt": prompt, "completion": label + "<|im_end|>"}
+    else:
+        return {
+            "prompt": (
+                "### Instruction\nAnalyze the following 3GPP signaling log "
+                "and identify the root cause.\n\n"
+                f"### Log\n{log}\n\n"
+                f"### Root Cause\n"
+            ),
+            "completion": label,
+        }
 
 
 def main():
@@ -136,7 +157,7 @@ def main():
     model.gradient_checkpointing_enable()
 
     dataset = load_dataset("json", data_files=train_file, split="train")
-    dataset = dataset.map(format_example, remove_columns=dataset.column_names)
+    dataset = dataset.map(lambda ex: format_example(ex, model_id=args.model_id), remove_columns=dataset.column_names)
 
     training_args = SFTConfig(
         output_dir=args.output_dir,

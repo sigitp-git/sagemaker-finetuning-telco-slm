@@ -53,6 +53,7 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
      - [6.5.11 Results — Option C Evaluation](#6511-results--option-c-evaluation)
      - [6.5.12 Further Improvement Options (D–H)](#6512-further-improvement-options-dh)
      - [6.5.13 Option D+E Implementation — Improved Filter + Longer Generation](#6513-option-de-implementation--improved-filter--longer-generation)
+     - [6.5.14 Option H Implementation — Qwen3 Chat Template Training](#6514-option-h-implementation--qwen3-chat-template-training)
 7. [Validate with Real Operator Data](#7-validate-with-real-operator-data)
 8. [Deploy and Run the Ensemble](#8-deploy-and-run-the-ensemble)
    - [8.1 SageMaker Real-Time Endpoint](#81-sagemaker-real-time-endpoint)
@@ -1626,7 +1627,7 @@ Current config: `r=16, lora_alpha=32`, targeting 4 attention projections (`q_pro
 
 1,300 examples × 3 epochs = 3,900 gradient steps. For a 14B model, this is quite light. Generate 5,000–10,000 examples via Bedrock and train for 5–10 epochs. More data gives the adapter more diverse examples of each failure type, reducing overfitting to the limited patterns in the current dataset.
 
-**Option H — Use chat template format for Qwen3 (retrain)**
+**Option H — Use chat template format for Qwen3 (retrain)** ✅ CHOSEN
 
 Qwen3 was designed for chat-style interactions with `<|im_start|>` / `<|im_end|>` tokens. Training with raw `### Instruction` format fights against the model's pretrained chat template. Formatting training data as proper chat messages could dramatically improve output quality by working *with* the model's architecture instead of against it.
 
@@ -1778,6 +1779,96 @@ Gemma continues to produce empty outputs for all 992 examples. The longer genera
 **Conclusion:**
 
 Option D+E proved that Qwen3 was reasoning correctly all along — the bottleneck was the extraction pipeline, not the model. With the improved filter and longer generation, Qwen3 achieves 76.31% F1, placing it between Nova zero-shot (90.83%) and Claude zero-shot (93.45%) in accuracy. Mistral-Nemo remains the top SLM at 99.7% F1. Gemma requires more fundamental changes (Options F/G/H) to produce any output at all.
+
+#### 6.5.14 Option H Implementation — Qwen3 Chat Template Training
+
+Option D+E improved Qwen3 from 17.24% → 76.31% F1 by fixing the extraction pipeline. But the remaining 24% gap to Mistral-Nemo (99.7%) is caused by the model still generating verbose prose instead of clean JSON arrays. The root cause: Qwen3 was pretrained with a chat template (`<|im_start|>` / `<|im_end|>` tokens) but fine-tuned with raw `### Instruction` format, which fights against the model's architecture.
+
+**The fix — train and infer using Qwen3's native chat template:**
+
+Changes to `src/train.py`:
+
+```python
+# Models that use a chat template for training and inference
+CHAT_TEMPLATE_MODELS = {"Qwen/Qwen3-14B"}
+
+SYSTEM_PROMPT = (
+    "You are a 3GPP root cause analysis assistant. "
+    "Given a signaling log, respond with ONLY a JSON array of root cause labels. "
+    "Valid labels: core_network_failure, authentication_failure, normal, "
+    "handover_failure, congestion, qos_violation, transport_jitter, radio_failure. "
+    'Example: ["congestion"]'
+)
+
+def format_example(example, model_id=""):
+    log = example["log"]
+    label = json.dumps(example["root_cause"])
+
+    if model_id in CHAT_TEMPLATE_MODELS:
+        # Qwen3 native chat format
+        prompt = (
+            f"<|im_start|>system\n{SYSTEM_PROMPT}<|im_end|>\n"
+            f"<|im_start|>user\n{log}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+        return {"prompt": prompt, "completion": label + "<|im_end|>"}
+    else:
+        # Raw format for Mistral-Nemo and Gemma
+        return {
+            "prompt": "### Instruction\n...\n### Root Cause\n",
+            "completion": label,
+        }
+```
+
+Changes to `src/inference_slm.py`:
+
+```python
+# Qwen3 uses its native chat template for inference
+QWEN3_PROMPT_TEMPLATE = (
+    "<|im_start|>system\n{system}<|im_end|>\n"
+    "<|im_start|>user\n{log}<|im_end|>\n"
+    "<|im_start|>assistant\n"
+)
+
+# Stop generation at <|im_end|> so the model outputs only the JSON array
+class StopOnImEnd(StoppingCriteria):
+    def __call__(self, input_ids, scores, **kwargs):
+        if input_ids.shape[1] >= len(stop_token_ids):
+            for row in input_ids:
+                if row[-len(stop_token_ids):].tolist() == stop_token_ids:
+                    return True
+        return False
+```
+
+**Why this should work:**
+
+1. The system prompt explicitly instructs "respond with ONLY a JSON array" — this leverages Qwen3's instruction-following ability that was trained into the base model
+2. The `<|im_start|>assistant\n` token puts the model in "answer mode" — it knows to produce a concise response, not continue reasoning
+3. The `<|im_end|>` stop sequence prevents verbose rambling — the model stops after the JSON array
+4. The completion includes `<|im_end|>` so the model learns during training that the answer is just the JSON array followed by the end token
+
+**Impact on other models:**
+
+- Mistral-Nemo and Gemma continue to use the raw `### Instruction` format — no change to their training or inference
+- The `CHAT_TEMPLATE_MODELS` set controls which models get the chat template treatment
+- If Mistral-Nemo needs retraining in the future, it will use the same format as before
+
+**Submit Option H training job:**
+
+```bash
+# Retrain Qwen3-14B with chat template format
+python3 submit_training.py \
+  --role arn:aws:iam::ACCOUNT_ID:role/service-role/AmazonSageMaker-ExecutionRole \
+  --bucket your-telco-llm-bucket \
+  --model_id Qwen/Qwen3-14B \
+  --use_4bit
+```
+
+**Poll training status:**
+
+```bash
+aws sagemaker describe-training-job --training-job-name <JOB_NAME> --query TrainingJobStatus --output text
+```
 
 ---
 
