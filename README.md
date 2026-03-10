@@ -19,17 +19,17 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
    - [3.1 Install Dependencies](#31-install-dependencies)
    - [3.2 Submit Training Jobs](#32-submit-training-jobs)
    - [3.3 Monitor Training Progress](#33-monitor-training-progress)
-   - [3.4 Training Results — Mistral-Nemo](#34-training-results-mistral-nemo)
-   - [3.5 Training Results — Qwen3-14B](#35-training-results-qwen3-14b)
-   - [3.6 Training Results — Gemma 3 12B](#36-training-results-gemma-3-12b)
-   - [3.7 Training Summary — All Models](#37-training-summary-all-models)
+   - [3.4 Training Results - Mistral-Nemo](#34-training-results---mistral-nemo)
+   - [3.5 Training Results - Qwen3-14B](#35-training-results---qwen3-14b)
+   - [3.6 Training Results - Gemma 3 12B](#36-training-results---gemma-3-12b)
+   - [3.7 Training Summary - All Models](#37-training-summary---all-models)
    - [3.8 Save Adapters and Training Costs](#38-save-adapters-and-training-costs)
 4. [Evaluate Frontier Models via Bedrock](#4-evaluate-frontier-models-via-bedrock)
    - [4.1 Prerequisites](#41-prerequisites)
    - [4.2 Prompt Strategies](#42-prompt-strategies)
    - [4.3 Run All 6 Evaluations](#43-run-all-6-evaluations)
    - [4.4 Score All 6 Runs](#44-score-all-6-runs)
-   - [4.5 Results — Frontier Model Evaluation](#45-results-frontier-model-evaluation)
+   - [4.5 Results - Frontier Model Evaluation](#45-results---frontier-model-evaluation)
    - [4.6 Per-Class Breakdown](#46-per-class-breakdown-best-variant-per-model)
    - [4.7 Observations](#47-observations)
 5. [Apply a Deterministic Post-Processing Filter](#5-apply-a-deterministic-post-processing-filter)
@@ -43,12 +43,12 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
      - [6.5.1 Inference Script](#651-inference-script)
      - [6.5.2 Submit Inference Jobs](#652-submit-inference-jobs)
      - [6.5.3 Score SLM Predictions](#653-score-slm-predictions)
-     - [6.5.4 Results — SLM Evaluation](#654-results-slm-evaluation)
-     - [6.5.5 Per-Class Breakdown — Mistral-Nemo (Best SLM)](#655-per-class-breakdown-mistral-nemo-best-slm)
-     - [6.5.6 Per-Class Breakdown — Qwen3-14B (Best Config)](#656-per-class-breakdown-qwen3-14b-best-config)
+     - [6.5.4 Results - SLM Evaluation](#654-results---slm-evaluation)
+     - [6.5.5 Per-Class Breakdown - Mistral-Nemo (Best SLM)](#655-per-class-breakdown---mistral-nemo-best-slm)
+     - [6.5.6 Per-Class Breakdown - Qwen3-14B (Best Config)](#656-per-class-breakdown---qwen3-14b-best-config)
      - [6.5.7 Qwen3 Optimization Journey](#657-qwen3-optimization-journey)
-     - [6.5.8 Gemma 3 12B — Unresolved](#658-gemma-3-12b-unresolved)
-7. [Final Results — All Models Compared](#7-final-results-all-models-compared)
+     - [6.5.8 Gemma 3 12B - Unresolved](#658-gemma-3-12b---unresolved)
+7. [Final Results - All Models Compared](#7-final-results---all-models-compared)
 8. [Validate with Real Operator Data](#8-validate-with-real-operator-data)
 9. [Deploy and Run the Ensemble](#9-deploy-and-run-the-ensemble)
    - [9.1 SageMaker Real-Time Endpoint](#91-sagemaker-real-time-endpoint)
@@ -300,7 +300,7 @@ aws logs tail /aws/sagemaker/TrainingJobs \
   --log-stream-name-prefix <job-name> --follow
 ```
 
-#### 3.4 Training Results — Mistral-Nemo
+#### 3.4 Training Results - Mistral-Nemo
 
 ```
 Step  25  | loss: 3.4207 | epoch: 0.15
@@ -316,7 +316,7 @@ Step 325  | loss: 1.0355 | epoch: 2.01
 > - **Final loss**: 1.035 (started ~3.4, dropped steadily — healthy convergence)
 > - **Average train loss**: 1.359
 
-#### 3.5 Training Results — Qwen3-14B
+#### 3.5 Training Results - Qwen3-14B
 
 ```
 Step  25  | loss: 0.5811 | epoch: 0.15
@@ -332,7 +332,7 @@ Step 325  | loss: 0.6052 | epoch: 2.01
 >
 > The flat loss curve indicates Qwen3's pre-trained weights already produce reasonable predictions for structured JSON output tasks. The LoRA adapter makes fine adjustments rather than learning from scratch.
 
-#### 3.6 Training Results — Gemma 3 12B
+#### 3.6 Training Results - Gemma 3 12B
 
 ```
 Step  25  | loss: 4.8850 | epoch: 0.15
@@ -346,7 +346,7 @@ Step 325  | loss: 5.1441 | epoch: 2.01
 > - **Final loss**: 5.144 (high absolute loss due to different tokenizer/vocabulary — not directly comparable to other models)
 > - **Mean token accuracy**: 86.5%
 
-#### 3.7 Training Summary — All Models
+#### 3.7 Training Summary - All Models
 
 ![SageMaker Training Jobs - All Completed](images/sagemaker-training-jobs-completed.png)
 
@@ -442,7 +442,7 @@ python3 src/evaluate.py --predictions results/preds_claude_five_shot_cot.jsonl -
 aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 ```
 
-#### 4.5 Results — Frontier Model Evaluation
+#### 4.5 Results - Frontier Model Evaluation
 
 | Model | Strategy | F1 | Precision | Recall | Exact Match | n |
 |-------|----------|---:|----------:|-------:|------------:|--:|
@@ -656,7 +656,7 @@ python3 src/evaluate.py --predictions results/preds_gemma-3-12b-pt_slm.jsonl --m
 aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 ```
 
-##### 6.5.4 Results — SLM Evaluation
+##### 6.5.4 Results - SLM Evaluation
 
 | Model | Configuration | F1 | Precision | Recall | Exact Match | n |
 |-------|--------------|---:|----------:|-------:|------------:|--:|
@@ -670,9 +670,9 @@ aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 
 - **Qwen3-14B (77.4% F1)** — Competitive after optimization. Achieves high precision (100% on 5 of 8 classes) but lower recall on `qos_violation` (14.4%) and `transport_jitter` (48.8%). Places between Nova zero-shot (90.8%) and Claude zero-shot (93.5%) in the ranking.
 
-- **Gemma 3 12B (11.9% F1)** — Produces empty outputs for all 992 examples, defaulting to `["normal"]`. The 11.9% F1 corresponds exactly to the proportion of `normal` examples in the test set (118/992). The LoRA adapter was insufficient to teach this pure pre-trained model structured generation. See [Section 6.5.8](#658-gemma-3-12b-unresolved).
+- **Gemma 3 12B (11.9% F1)** — Produces empty outputs for all 992 examples, defaulting to `["normal"]`. The 11.9% F1 corresponds exactly to the proportion of `normal` examples in the test set (118/992). The LoRA adapter was insufficient to teach this pure pre-trained model structured generation. See [Section 6.5.8](#658-gemma-3-12b---unresolved).
 
-##### 6.5.5 Per-Class Breakdown — Mistral-Nemo (Best SLM)
+##### 6.5.5 Per-Class Breakdown - Mistral-Nemo (Best SLM)
 
 | Failure Type | F1 | Precision | Recall | n |
 |-------------|---:|----------:|-------:|--:|
@@ -687,7 +687,7 @@ aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 
 Mistral-Nemo achieves 100% F1 on 6 of 8 failure types. The only imperfect classes are `authentication_failure` (1 miss) and `transport_jitter` (2 misses).
 
-##### 6.5.6 Per-Class Breakdown — Qwen3-14B (Best Config)
+##### 6.5.6 Per-Class Breakdown - Qwen3-14B (Best Config)
 
 | Failure Type | F1 | Precision | Recall | n |
 |-------------|---:|----------:|-------:|--:|
@@ -722,7 +722,7 @@ Qwen3-14B required several iterations to reach 77.4% F1. The key insight: the mo
 
 > For full details on each failed and successful option, see [EXECUTION-LOG.md](EXECUTION-LOG.md) sections 6.5.6 through 6.5.14.
 
-##### 6.5.8 Gemma 3 12B — Unresolved
+##### 6.5.8 Gemma 3 12B - Unresolved
 
 Gemma 3 12B (`google/gemma-3-12b-pt`) produces empty outputs for all 992 test examples across all configurations tested (original, instruction-tuned `-it` variant, completion-only training, improved filter). The 11.9% F1 is entirely from the `normal` fallback default.
 
@@ -733,7 +733,7 @@ The root cause: `gemma-3-12b-pt` is a pure pre-trained model with zero instructi
 
 ---
 
-### 7. Final Results — All Models Compared
+### 7. Final Results - All Models Compared
 [↑ Back to Table of Contents](#table-of-contents)
 
 | Rank | Model | Type | Strategy | F1 | n |
