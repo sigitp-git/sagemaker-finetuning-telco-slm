@@ -65,6 +65,7 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
     - [Telco and 3GPP Concepts](#telco-and-3gpp-concepts)
     - [Infrastructure and Cost](#infrastructure-and-cost)
     - [AWS Services](#aws-services)
+    - [ML Libraries and Tools](#ml-libraries-and-tools)
 
 > For the full execution log including all failed experiments, intermediate results, and debugging details, see [EXECUTION-LOG.md](EXECUTION-LOG.md).
 
@@ -868,9 +869,24 @@ aws s3 cp reports/ s3://your-telco-llm-bucket/reports/ --recursive
 
 ### Models and Architecture
 
-**LLM (Large Language Model)** — A neural network trained on massive text data to understand and generate language. Examples: Claude, GPT-4.
+**LLM (Large Language Model)** — A neural network trained on massive, broad datasets to understand and generate language across a wide range of topics. Requires significant compute to train and serve. Excels at general knowledge but can hallucinate on domain-specific queries. Examples: Claude, GPT-4, Amazon Nova Pro.
 
-**SLM (Small Language Model)** — A smaller, more efficient LLM (1B–14B parameters). Easier to deploy on-premise and cheaper to run. May need fine-tuning to match frontier model quality.
+**SLM (Small Language Model)** — A smaller, more efficient language model (typically 1B–14B parameters) trained or fine-tuned on domain-specific datasets. Requires fewer resources to train and deploy, making it practical for edge devices and on-premise infrastructure. Excels in its target domain but has narrower general knowledge. Examples: Mistral-Nemo-Base-2407, Qwen3-14B, Gemma-3-12B.
+
+**LLM vs SLM — Key Differences**
+
+| Dimension | LLM | SLM |
+|---|---|---|
+| Training data | Broad, internet-scale datasets | Smaller, domain-specific datasets |
+| Parameter count | Hundreds of billions | Billions (1B–14B typical) |
+| Training cost | Very high (thousands of GPUs) | Significantly lower |
+| Inference cost | High (pay-per-token via managed APIs) | Low (self-hosted on a single GPU) |
+| General knowledge | Broad and deep | Narrow, focused on target domain |
+| Domain accuracy | Can hallucinate on niche queries | High accuracy after fine-tuning |
+| Deployment | Cloud API (Bedrock, OpenAI) | Edge, on-premise, SageMaker endpoint |
+| Customization | Prompt engineering preferred | Fast to fine-tune with LoRA/QLoRA |
+
+> In this benchmark, fine-tuned SLMs are evaluated against frontier LLMs on 3GPP RCA to determine whether domain fine-tuning can close the accuracy gap at a fraction of the inference cost.
 
 **14B** — 14 billion parameters. More parameters generally means more capability but also more memory and compute.
 
@@ -947,6 +963,8 @@ aws s3 cp reports/ s3://your-telco-llm-bucket/reports/ --recursive
 **IAM Role** — AWS identity with specific permissions. Assigned to SageMaker jobs for secure access to S3 and Bedrock.
 
 **boto3** — Official AWS SDK for Python.
+
+### ML Libraries and Tools
 
 **Hugging Face** — Open-source platform hosting pre-trained ML models and providing the core ML libraries used in this benchmark (`transformers`, `peft`, `trl`, `datasets`, `accelerate`).
 
