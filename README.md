@@ -72,10 +72,16 @@ All steps use AWS managed services, with Amazon SageMaker Training Jobs as the p
 
 ## How to Run This Benchmark
 
+![End-to-End Pipeline Overview](images/arch-pipeline-overview.png)
+
+![Script-to-Service Component Map](images/arch-component-map.png)
+
 ### 1. Provision Infrastructure
 [↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Services: Amazon SageMaker Training Jobs (recommended) or Amazon EC2**
+
+![IAM Roles and Security Architecture](images/arch-iam-security.png)
 
 #### 1.1 SageMaker Training Jobs (Recommended)
 
@@ -148,6 +154,8 @@ pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu121
 
 **AWS Services: Amazon Bedrock, Amazon S3**
 
+![Synthetic Data Generation Flow](images/arch-data-generation.png)
+
 Use a frontier model via Amazon Bedrock to generate the synthetic 3GPP log dataset. This avoids needing real operator data for the initial experiment.
 
 Steps:
@@ -185,6 +193,8 @@ aws s3 cp test.jsonl  s3://your-telco-llm-bucket/data/test.jsonl
 #### 2.1 S3 Bucket Structure
 
 As you progress through the benchmark steps, the S3 bucket accumulates artifacts from data upload, training, inference, and evaluation:
+
+![S3 Bucket Architecture](images/arch-s3-bucket.png)
 
 ```
 s3://your-telco-llm-bucket/
@@ -231,6 +241,10 @@ s3://your-telco-llm-bucket/
 [↑ Back to Table of Contents](#table-of-contents)
 
 **AWS Service: Amazon SageMaker Training Jobs or Amazon EC2**
+
+![QLoRA 4-bit Fine-Tuning Architecture](images/arch-qlora.png)
+
+![SageMaker Training Job Flow](images/arch-training-flow.png)
 
 Run LoRA/QLoRA fine-tuning using the [Hugging Face TRL](https://github.com/huggingface/trl) library and PEFT.
 
@@ -383,6 +397,8 @@ Training cost reference (SageMaker on-demand pricing, us-east-1):
 
 **AWS Service: Amazon Bedrock**
 
+![Bedrock Frontier Model Evaluation Flow](images/arch-bedrock-eval.png)
+
 Run Claude Opus 4.6 and Amazon Nova Pro against the 992-scenario test set using three prompt strategies per model (6 runs total).
 
 #### 4.1 Prerequisites
@@ -497,6 +513,8 @@ Best variant per model: Claude Opus 4.6 five_shot_cot (99.4% F1), Nova Pro five_
 
 **Implementation: `src/filter.py`** (applied automatically by `src/evaluate.py`)
 
+![Sympathetic Noise Filter Pipeline](images/arch-noise-filter.png)
+
 Before scoring any model output, the same noise-removal filter is applied to all responses — both fine-tuned SLMs and Bedrock frontier models. This strips sympathetic noise events from the predicted root cause list and normalizes labels to the 8 valid failure types.
 
 > **No manual step required.** The filter is integrated into the scoring pipeline. When you run `python3 src/evaluate.py`, it imports `filter_sympathetic_noise` and `extract_root_cause_from_text` from `src/filter.py` and applies them to every prediction before computing metrics.
@@ -583,6 +601,8 @@ aws s3 cp results/results.json s3://your-telco-llm-bucket/results/results.json
 ```
 
 #### 6.5 SLM Inference and Evaluation
+
+![SLM Inference Flow](images/arch-inference-flow.png)
 
 ##### 6.5.1 Inference Script
 
@@ -773,6 +793,8 @@ The above steps use synthetic data. For production validation with a real telco 
 
 ### 9. Deploy and Run the Ensemble
 [↑ Back to Table of Contents](#table-of-contents)
+
+![Deployment Architecture](images/arch-deployment.png)
 
 **AWS Services: Amazon SageMaker Endpoints, Amazon EC2, AWS Outposts**
 
