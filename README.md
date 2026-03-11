@@ -966,6 +966,8 @@ aws s3 cp reports/ s3://your-telco-llm-bucket/reports/ --recursive
 
 ### ML Libraries and Tools
 
+**PyTorch** — Open-source deep learning framework developed by Meta that provides tensor computation with GPU acceleration and automatic differentiation for building and training neural networks. All models in this benchmark (Mistral-Nemo, Qwen3, Gemma) run on PyTorch. The Hugging Face ecosystem (`transformers`, `peft`, `trl`, `accelerate`) is built on top of it. This benchmark pins `pytorch_version="2.3.0"` with CUDA 12.1 (`cu121`) to avoid the CUBLAS regression in newer builds.
+
 **Hugging Face** — Open-source platform hosting pre-trained ML models and providing the core ML libraries used in this benchmark (`transformers`, `peft`, `trl`, `datasets`, `accelerate`).
 
 **`transformers`** — Hugging Face's core library. Loads pre-trained models (Mistral-Nemo, Qwen3, Gemma), handles tokenization, and provides `TrainingArguments` for configuring fine-tuning jobs. The backbone everything else plugs into.
